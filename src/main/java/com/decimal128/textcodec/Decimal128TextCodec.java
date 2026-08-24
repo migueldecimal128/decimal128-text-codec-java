@@ -145,6 +145,62 @@ public final class Decimal128TextCodec {
     }
 
     /**
+     * The exact bound on a rendered decimal128, in bytes.
+     *
+     * <p>The widest scientific form {@code -9.999...E-6143} is 1 sign, 1 digit,
+     * 1 radix point, 33 digits, 1 {@code E}, 1 sign and 4 exponent digits; the
+     * widest plain form {@code -0.000000999...} is 1 sign, 1 zero, 1 radix
+     * point, 6 leading zeros and 34 digits. Both reach exactly 42.
+     *
+     * <p>A buffer passed to {@link #bid128ToString(byte[], long, long)} must be
+     * at least this long. The same number, and the same meaning, as
+     * {@code MAX_LEN} in the Rust port, {@code MaxLen} in Go and {@code max_len}
+     * in Zig; the C port's {@code D128TEXT_MAX_LEN} is one larger because it
+     * writes a NUL and these do not.
+     */
+    public static final int MAX_LEN = 42;
+
+    /**
+     * Render a BID128 value into a caller-supplied buffer, allocating nothing.
+     *
+     * <p>Writes the ASCII text into {@code out} starting at index 0 and returns
+     * its length; the text is {@code out[0]} through {@code out[n - 1]}. No
+     * terminator is written. The text is identical to what
+     * {@link #bid128ToString(long, long)} returns, and this form is the one to
+     * reach for when the destination is bytes — a stream, a socket, a CSV or
+     * JSON writer — because it leaves nothing for the collector.
+     *
+     * <p>This cannot fail for a correctly sized buffer. {@code out} must be at
+     * least {@link #MAX_LEN} long; a shorter one throws
+     * {@link ArrayIndexOutOfBoundsException} on the first write past its end
+     * rather than corrupting anything, so an undersized buffer is a caller bug
+     * that surfaces immediately.
+     *
+     * @param out       the destination, at least {@link #MAX_LEN} bytes
+     * @param bid128Hi  high 64 bits of the BID128 encoding
+     * @param bid128Lo  low 64 bits of the BID128 encoding
+     * @return the number of bytes written
+     */
+    public static int bid128ToString(byte[] out, long bid128Hi, long bid128Lo) {
+        return decodeBid128toBytes(out, bid128Hi, bid128Lo);
+    }
+
+    /**
+     * Render a DPD128 value into a caller-supplied buffer, allocating nothing.
+     *
+     * <p>The peer of {@link #bid128ToString(byte[], long, long)}, with the same
+     * buffer contract and the same output for peer encodings of a value.
+     *
+     * @param out       the destination, at least {@link #MAX_LEN} bytes
+     * @param dpd128Hi  high 64 bits of the DPD128 encoding
+     * @param dpd128Lo  low 64 bits of the DPD128 encoding
+     * @return the number of bytes written
+     */
+    public static int dpd128ToString(byte[] out, long dpd128Hi, long dpd128Lo) {
+        return decodeDpd128toBytes(out, dpd128Hi, dpd128Lo);
+    }
+
+    /**
      * Parse a decimal string into a BID128 value, writing the result into
      * {@code out}.
      *
@@ -578,6 +634,337 @@ public final class Decimal128TextCodec {
      */
     private static String newAsciiString(byte[] ascii) {
         return new String(ascii, StandardCharsets.ISO_8859_1);
+    }
+
+    /* ----------------------------------------------------------------------
+     * Rendering into the caller's buffer
+     *
+     * The peers of the four String renderers above, writing bytes instead of
+     * producing an object. They exist because the String form must allocate --
+     * that is what a String is -- and a caller feeding a stream or a byte
+     * buffer should not have to pay for one.
+     *
+     * The two families are deliberately separate rather than one built on the
+     * other. Routing the String form through these would cost it the interned
+     * constants: "Infinity", a bare NaN and every plain-form zero come back
+     * from the renderers above at zero bytes allocated, and building them from
+     * bytes would give that away. The price of keeping both is that the
+     * dispatchers are written twice; the corpus test pins them together by
+     * asserting the two forms agree on every row of every table, in both
+     * encodings, so they cannot drift unnoticed.
+     *
+     * None of the optional leading characters live in the string data. The
+     * sign, and the 's' that marks a signaling NaN, are each written
+     * unconditionally and then overwritten by whatever follows when they are
+     * not wanted -- the trick fnzToIntegerString already uses for the sign.
+     * The one exception is a TRAILING '+' in the exponent-form zero, noted
+     * where it happens.
+     * -------------------------------------------------------------------- */
+
+    private static final byte ascii_s = 0x73;
+
+    /**
+     * The peer of {@link #decodeBid128toString}, writing into the caller's
+     * buffer. Identical field extraction; only the four leaf calls differ.
+     */
+    private static int decodeBid128toBytes(byte[] out, long bid128Hi, long bid128Lo) {
+        // IEEE754-2019 Table 3.6-Decimal2 Interchange format parameters -- p 23
+        final int k = 128; // storage width in bits
+        // final int p = 34; // precision in digits
+        // final int emax = 6144;
+        final int bias = 6176;
+        final int w5 = 17; // w+5, combination field width in bits
+        final int t = 110; // trailing significand field width in bits
+        assert 1 + w5 + t == k;
+
+        // 1 + 17 + 110 == 128
+        // 1 bit for the sign
+        boolean sign = (bid128Hi < 0L);
+        // w5 bit combination field ... for bid128 0x1FFFF
+        int combination = ((int) (bid128Hi >> (t - 64))) & 0x1FFFF;
+        long coeffTHi = bid128Hi & ((1L << t) - 1L);
+
+        long coeffHi;
+        int qExp;
+        // if the top 2 bits are not 0b11
+        if ((combination >> (w5 - 2)) != 0b11) {
+            //  IEEE754-2019 3.5.2 c) 2) i) -- p 21
+            //   If G0 and G1 together are one of 00, 01, or 10, then the biased
+            //   exponent E is formed from G0 through Gw+1 and the significand
+            //   is formed from bits Gw+2 through the end of the encoding (including T).
+            //
+            // w+5=17 w=12 Gw+1=G13 Gw+2=G14
+            // the top 14 bits of the combination field represent the biased exponent ...
+            int biasedExponentE = combination >> 3;
+            qExp = biasedExponentE - bias;
+            // ... and the bottom 3 bits are the most significant bits of the significand
+            // coeff/significand is 3 + 110 == 113 ... but that's not all ... see below
+            coeffHi = (long) (combination & 0x07);
+        } else if ((combination >> (w5 - 4)) != 0b1111) {
+            // IEEE754-2019 3.5.2 c) 2) ii) -- p 21
+            //  If G0 and G1 together are 11 and G2 and G3 together are one
+            //  of 00, 01, or 10, then the biased exponent E is formed from
+            //  G2 through Gw+3 and the significand is formed by prefixing
+            //  the 4 bits (8 + Gw+4) to T.
+            //
+            // w+5=17 w=12 Gw+3=G15 Gw+4=G16
+            //
+            int biasedExponentE = (combination >>> 1) & ((1 << (w5 - 5 + 2)) - 1);
+            qExp = biasedExponentE - bias;
+            coeffHi = 8L + (long) (combination & 1);
+        } else if ((combination >> (w5 - 5)) == 0b11110) {
+            // if the top 5 bits are 0b11110 then Infinity
+            return infBytes(out, sign);
+        } else if ((combination >> (w5 - 5)) == 0b11111) {
+            // if the top 5 bits are 0x11111 then NaN
+            // with the next bit determining signaling NaN
+            long payloadHi = coeffTHi;
+            long payloadLo = bid128Lo;
+            boolean isSignaling = (((combination >> (w5 - 6)) & 1) != 0);
+            return nanBytes(out, sign, isSignaling, payloadHi, payloadLo);
+        } else {
+            // all possible cases were covered above
+            throw new IllegalStateException();
+        }
+        long dw1 = ((coeffHi << (t - 64)) | coeffTHi);
+        long dw0 = bid128Lo;
+        // IEEE754-2019 3.5.2 p21
+        //  If the value exceeds the maximum, the significand c is
+        //  non-canonical and the value used for c is zero.
+        if ((dw1 | dw0) == 0L ||
+            unsignedLT(MAXX_COEFF_34_HI, dw1) ||
+            (dw1 == MAXX_COEFF_34_HI && unsignedLT(MAXX_COEFF_34_LO - 1L, dw0))
+        )
+            return zerBytes(out, sign, qExp);
+        return fnzBytes(out, sign, qExp, dw1, dw0);
+    }
+
+    /**
+     * The peer of {@link #decodeDpd128toString}, writing into the caller's
+     * buffer. Identical field extraction; only the four leaf calls differ.
+     */
+    private static int decodeDpd128toBytes(byte[] out, long dpd128Hi, long dpd128Lo) {
+        final int bias = 6176;
+        final int w = 12;  // exponent continuation width
+        final int w5 = 17; // combination field width in bits
+        final int t = 110; // trailing significand field width in bits
+
+        boolean sign = (dpd128Hi < 0L);
+        int combination = ((int) (dpd128Hi >> (t - 64))) & 0x1FFFF;
+        // in DPD the low w bits of the biased exponent always sit at the bottom of G
+        int expContinuation = combination & 0x0FFF;
+
+        long d0;
+        int qExp;
+        boolean isNaN = false;
+        boolean isSignaling = false;
+
+        if ((combination >> (w5 - 2)) != 0b11) {
+            // G0G1 is 00, 01 or 10: leading digit 0..7, exponent MSBs in G0G1
+            int expMSB = combination >> (w5 - 2);
+            qExp = ((expMSB << w) | expContinuation) - bias;
+            d0 = (long) ((combination >> w) & 0b111);
+        } else if ((combination >> (w5 - 4)) != 0b1111) {
+            // G0G1 is 11 and G2G3 is not 11: leading digit 8..9, exponent MSBs in G2G3
+            int expMSB = (combination >> (w5 - 4)) & 0b11;
+            qExp = ((expMSB << w) | expContinuation) - bias;
+            d0 = 8L + (long) ((combination >> w) & 0b1);
+        } else if ((combination >> (w5 - 5)) == 0b11110) {
+            return infBytes(out, sign);
+        } else {
+            assert (combination >> (w5 - 5)) == 0b11111;
+            isNaN = true;
+            isSignaling = (((combination >> (w5 - 6)) & 1) != 0);
+            d0 = 0L;
+            qExp = 0;
+        }
+
+        // Rebuild the binary coefficient from the declets. The leading digit
+        // rides along as a sixth declet of the high group: values 0..9 encode
+        // to themselves as a declet, so it decodes back unchanged.
+        long decletsHi = (d0 << 50) | ((dpd128Hi & 0x3FFFFFFFFFFFL) << 4) | (dpd128Lo >>> 60);
+        long decletsLo = dpd128Lo & 0x0FFFFFFFFFFFFFFFL; // low 60 bits, six declets
+        long binHi = binFromDeclets(decletsHi);
+        long binLo = binFromDeclets(decletsLo);
+
+        long dw1;
+        long dw0;
+        if (binHi == 0L) {
+            dw1 = 0L;
+            dw0 = binLo;
+        } else {
+            dw0 = (binHi * TEN_POW_18) + binLo;
+            long carry = (unsignedLT(dw0, binLo)) ? 1L : 0L;
+            dw1 = unsignedMulHi(binHi, TEN_POW_18) + carry;
+        }
+
+        if (isNaN)
+            return nanBytes(out, sign, isSignaling, dw1, dw0);
+        if ((dw1 | dw0) == 0L)
+            return zerBytes(out, sign, qExp);
+        return fnzBytes(out, sign, qExp, dw1, dw0);
+    }
+
+
+    private static final byte[] INFINITY_TEXT = "Infinity".getBytes(StandardCharsets.ISO_8859_1);
+    private static final byte[] NAN_TEXT = "NaN".getBytes(StandardCharsets.ISO_8859_1);
+    private static final byte[] ZERO_EXP_TEXT = "0E".getBytes(StandardCharsets.ISO_8859_1);
+
+    /**
+     * Every plain-form zero is a prefix of this literal. {@code k = -qExp} is
+     * the count of zeros after the radix point, so {@code k == 0} renders
+     * {@code "0"} with no radix point at all and {@code k >= 1} renders
+     * {@code "0."} followed by {@code k} zeros -- lengths 1 and {@code k + 2}.
+     */
+    private static final byte[] PLAIN_ZERO = "0.000000".getBytes(StandardCharsets.ISO_8859_1);
+
+    private static int infBytes(byte[] out, boolean sign) {
+        int signLen = (sign) ? 1 : 0;
+        out[0] = ascii_minus; // overwritten by the 'I' when unsigned
+        System.arraycopy(INFINITY_TEXT, 0, out, signLen, INFINITY_TEXT.length);
+        return signLen + INFINITY_TEXT.length;
+    }
+
+    private static int nanBytes(
+        byte[] out, boolean sign, boolean isSignaling,
+        long payloadHi, long payloadLo
+    ) {
+        int signLen = (sign) ? 1 : 0;
+        int sLen = (isSignaling) ? 1 : 0;
+        int wordOff = signLen + sLen;
+        int baseLen = wordOff + NAN_TEXT.length;
+        out[0] = ascii_minus;   // overwritten by the 's' or the 'N' when unsigned
+        out[signLen] = ascii_s; // overwritten by the 'N' when quiet
+        System.arraycopy(NAN_TEXT, 0, out, wordOff, NAN_TEXT.length);
+        if ((payloadHi | payloadLo) == 0L ||
+            // non canonical IEEE 754-2019 3.5.2 c) 2)
+            unsignedLT(MAX_PAYLOAD_HI, payloadHi) ||
+            (payloadHi == MAX_PAYLOAD_HI && unsignedLT(MAX_PAYLOAD_LO, payloadLo))
+        )
+            return baseLen;
+        int digitLen = calcDigitLen128(payloadHi, payloadLo);
+        u128ToAscii(digitLen, payloadHi, payloadLo, out, baseLen);
+        return baseLen + digitLen;
+    }
+
+    private static int zerBytes(byte[] out, boolean sign, int qExp) {
+        int signLen = (sign) ? 1 : 0;
+        out[0] = ascii_minus; // overwritten by the '0' when unsigned
+        if (qExp <= 0 && qExp >= -6) {
+            int k = -qExp;
+            int zeroLen = (k == 0) ? 1 : k + 2;
+            System.arraycopy(PLAIN_ZERO, 0, out, signLen, zeroLen);
+            return signLen + zeroLen;
+        }
+        // A positive exponent needs an explicit '+'; a negative one prints its
+        // own '-' from appendIntBytes. Write the '+' unconditionally and let
+        // appendIntBytes land on top of it when qExp < 0 -- the same discipline
+        // as the leading sign, pointed the other way. It is correct only
+        // because appendIntBytes emits a '-' for a negative value and emits
+        // nothing for a positive one, and because the plain form above has
+        // already taken every qExp in [-6, 0], so this branch never sees zero.
+        int plusLen = (qExp > 0) ? 1 : 0;
+        int baseLen = signLen + ZERO_EXP_TEXT.length + plusLen;
+        System.arraycopy(ZERO_EXP_TEXT, 0, out, signLen, ZERO_EXP_TEXT.length);
+        out[signLen + ZERO_EXP_TEXT.length] = ascii_plus; // overwritten by the '-' when qExp < 0
+        return baseLen + appendIntBytes(out, baseLen, qExp);
+    }
+
+    /**
+     * Write a signed decimal exponent at {@code off}, returning its length.
+     * The magnitude never exceeds 6176, so it is at most four digits.
+     */
+    private static int appendIntBytes(byte[] out, int off, int v) {
+        int signLen = 0;
+        int magnitude = v;
+        if (v < 0) {
+            out[off] = ascii_minus;
+            signLen = 1;
+            magnitude = -v;
+        }
+        int digitLen;
+        if (magnitude >= 1000)
+            digitLen = 4;
+        else if (magnitude >= 100)
+            digitLen = 3;
+        else if (magnitude >= 10)
+            digitLen = 2;
+        else
+            digitLen = 1;
+        renderTailDigitsBeforeIndex(digitLen, (long) magnitude, out, off + signLen + digitLen);
+        return signLen + digitLen;
+    }
+
+    private static int fnzBytes(byte[] out, boolean sign, int qExp, long dw1, long dw0) {
+        int digitLen = calcDigitLen128(dw1, dw0);
+        int eExp = qExp + (digitLen - 1);
+        if (qExp == 0)
+            return fnzToIntegerBytes(out, sign, digitLen, dw1, dw0);
+        if (qExp <= 0 && eExp >= -6)
+            return fnzToDecimalPointBytes(out, sign, qExp, digitLen, dw1, dw0);
+        return fnzToNormalizedScientificBytes(out, sign, qExp, digitLen, dw1, dw0);
+    }
+
+    private static int fnzToIntegerBytes(byte[] out, boolean sign, int digitLen, long dw1, long dw0) {
+        assert digitLen > 0;
+        int signLen = (sign) ? 1 : 0;
+        out[0] = ascii_minus; // overwritten by the first digit when unsigned
+        u128ToAscii(digitLen, dw1, dw0, out, signLen);
+        return signLen + digitLen;
+    }
+
+    private static int fnzToDecimalPointBytes(
+        byte[] out, boolean sign, int qExp,
+        int digitLen, long dw1, long dw0
+    ) {
+        int digitsRightOfDecimal = -qExp;
+        int leadingZeroCount = Math.max(1 + digitsRightOfDecimal - digitLen, 0);
+        int signLen = (sign) ? 1 : 0;
+        int decimalPointLen = 1;
+        int totalLen = signLen + leadingZeroCount + decimalPointLen + digitLen;
+        out[0] = ascii_minus;
+        for (int i = signLen; i <= leadingZeroCount; ++i) // there is one extra here
+            out[i] = ascii_0;
+        u128ToAscii(digitLen, dw1, dw0, out, signLen + leadingZeroCount);
+        for (int i = totalLen - 1; i >= totalLen - digitsRightOfDecimal; --i)
+            out[i] = out[i - 1];
+        out[totalLen - digitsRightOfDecimal - 1] = ascii_dot;
+        return totalLen;
+    }
+
+    private static int fnzToNormalizedScientificBytes(
+        byte[] out, boolean sign, int qExp,
+        int digitLen, long dw1, long dw0
+    ) {
+        assert digitLen > 0;
+        int eExp = qExp + (digitLen - 1);
+        int eExpAbs = (eExp ^ (eExp >> 31)) - (eExp >> 31);
+        int signLen = (sign) ? 1 : 0;
+        int decimalPointLen = (digitLen > 1) ? 1 : 0;
+        int expELen = 1;
+        int expSignLen = 1;
+        byte expSignByte = (eExp < 0) ? ascii_minus : ascii_plus;
+        int expDigitLen;
+        if (eExpAbs >= 1000)
+            expDigitLen = 4;
+        else if (eExpAbs >= 100)
+            expDigitLen = 3;
+        else if (eExpAbs >= 10)
+            expDigitLen = 2;
+        else
+            expDigitLen = 1;
+        int totalLen = signLen + decimalPointLen + digitLen + expELen + expSignLen + expDigitLen;
+        out[0] = ascii_minus;
+        u128ToAscii(digitLen, dw1, dw0, out, signLen + decimalPointLen);
+        if (decimalPointLen > 0) {
+            out[signLen] = out[signLen + 1];
+            out[signLen + 1] = ascii_dot;
+        }
+        int iE = signLen + decimalPointLen + digitLen;
+        out[iE] = ascii_E;
+        out[iE + 1] = expSignByte;
+        renderTailDigitsBeforeIndex(expDigitLen, (long) eExpAbs, out, totalLen);
+        return totalLen;
     }
 
     // ------- render an integer -------------------------------------------

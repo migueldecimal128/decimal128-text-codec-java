@@ -129,13 +129,26 @@ public class TestCorpusVectors {
     /**
      * Every row: both encodings must render to the expected text, and
      * therefore to each other.
+     *
+     * <p>Each row is rendered twice, once through the {@code String} form and
+     * once into a caller-supplied buffer, and both must produce the expected
+     * text. The two forms are separate implementations -- the {@code String}
+     * one keeps its interned constants, the buffer one allocates nothing -- so
+     * this is what pins them together.
      */
     static void runDecodeTable(List<CorpusRow> rows, String label) {
+        byte[] buf = new byte[Decimal128TextCodec.MAX_LEN];
         for (CorpusRow row : rows) {
             assertEquals(row.text, Decimal128TextCodec.bid128ToString(row.bidHi(), row.bidLo()),
                 label + " line " + row.lineNumber + ": bid #" + row.bidHex);
             assertEquals(row.text, Decimal128TextCodec.dpd128ToString(row.dpdHi(), row.dpdLo()),
                 label + " line " + row.lineNumber + ": dpd #" + row.dpdHex);
+            int bidLen = Decimal128TextCodec.bid128ToString(buf, row.bidHi(), row.bidLo());
+            assertEquals(row.text, new String(buf, 0, bidLen, StandardCharsets.ISO_8859_1),
+                label + " line " + row.lineNumber + ": bid into buffer #" + row.bidHex);
+            int dpdLen = Decimal128TextCodec.dpd128ToString(buf, row.dpdHi(), row.dpdLo());
+            assertEquals(row.text, new String(buf, 0, dpdLen, StandardCharsets.ISO_8859_1),
+                label + " line " + row.lineNumber + ": dpd into buffer #" + row.dpdHex);
         }
     }
 
