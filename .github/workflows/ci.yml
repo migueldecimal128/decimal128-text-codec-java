@@ -1,0 +1,36 @@
+name: ci
+
+# The codec is one file with no runtime dependencies and one target, the JVM, so
+# CI exists to run it somewhere the developer does not: the working host is
+# macOS/aarch64, and Linux/x86-64 is where every other reader will be.
+#
+# The conformance vectors come from decimal128-resources, mounted as a submodule
+# at <repo>/resources, so the checkout needs `submodules: recursive` -- without
+# it every corpus test fails with the `git submodule update` hint rather than
+# quietly passing on no rows. The 84,783-row canonical table comes with it.
+#
+# Assertions are the codec's internal-consistency checks; the test task arms
+# them explicitly, so a CI run exercises every one of them over the whole corpus.
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    name: jvm ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: gradle
+      - name: Test
+        run: ./gradlew test --console=plain
