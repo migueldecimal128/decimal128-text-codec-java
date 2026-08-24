@@ -18,9 +18,9 @@ import java.nio.charset.StandardCharsets;
  * biased exponent, and a coefficient that represents up to 34 decimal
  * digits.
  *
- * <p>This class provides no arithmetic, no field extraction, and no
- * value-type wrapper — only string conversion in both directions. For
- * the full IEEE 754-2019 decimal128 implementation (arithmetic,
+ * <p>These functions provide no arithmetic, no field extraction, and
+ * no value-type wrapper — only string conversion in both directions.
+ * For the full IEEE 754-2019 decimal128 implementation (arithmetic,
  * comparison, all rounding-direction attributes, IEEE status flags,
  * etc.), see https://decimal128.com.
  *
@@ -89,7 +89,7 @@ import java.nio.charset.StandardCharsets;
  *
  * <h2>Thread safety</h2>
  *
- * All four methods are pure and safe for concurrent use.
+ * All methods are pure and safe for concurrent use.
  *
  * <h2>License</h2>
  *
@@ -124,7 +124,9 @@ public final class Decimal128TextCodec {
      * @return the decimal string form of the BID128 value
      */
     public static String bid128ToString(long bid128Hi, long bid128Lo) {
-        return decodeBid128toString(bid128Hi, bid128Lo);
+        byte[] ascii = new byte[MAX_LEN];
+        int len = bid128ToAscii(ascii, bid128Hi, bid128Lo);
+        return new String(ascii, 0, len, StandardCharsets.ISO_8859_1);
     }
 
     /**
@@ -145,7 +147,9 @@ public final class Decimal128TextCodec {
      * @return the decimal string form of the DPD128 value
      */
     public static String dpd128ToString(long dpd128Hi, long dpd128Lo) {
-        return decodeDpd128toString(dpd128Hi, dpd128Lo);
+        byte[] ascii = new byte[MAX_LEN];
+        int len = dpd128ToAscii(ascii, dpd128Hi, dpd128Lo);
+        return new String(ascii, 0, len, StandardCharsets.ISO_8859_1);
     }
 
     /**
@@ -153,10 +157,10 @@ public final class Decimal128TextCodec {
      *
      * <p>The widest scientific form {@code -9.999...E-6143} is 1 sign, 1 digit,
      * 1 radix point, 33 digits, 1 {@code E}, 1 sign and 4 exponent digits; the
-     * widest plain form {@code -0.000000999...} is 1 sign, 1 zero, 1 radix
-     * point, 6 leading zeros and 34 digits. Both reach exactly 42.
+     * widest plain form {@code -0.00000999...} is 1 sign, 1 zero, 1 radix
+     * point, 5 leading zeros and 34 digits. Each form reaches exactly 42.
      *
-     * <p>A buffer passed to {@link #bid128ToString(byte[], long, long)} must be
+     * <p>A buffer passed to {@link #bid128ToAscii(byte[], long, long)} must be
      * at least this long. The same number, and the same meaning, as
      * {@code MAX_LEN} in the Rust port, {@code MaxLen} in Go and {@code max_len}
      * in Zig; the C port's {@code D128TEXT_MAX_LEN} is one larger because it
@@ -180,19 +184,92 @@ public final class Decimal128TextCodec {
      * rather than corrupting anything, so an undersized buffer is a caller bug
      * that surfaces immediately.
      *
+     * <p>Field extraction follows IEEE 754-2019 §3.5.2; the class it lands on
+     * — Infinity, NaN (quiet or signaling, with optional payload), zero
+     * (canonical or non-canonical), or finite non-zero — picks the leaf
+     * renderer.
+     *
      * @param out       the destination, at least {@link #MAX_LEN} bytes
      * @param bid128Hi  high 64 bits of the BID128 encoding
      * @param bid128Lo  low 64 bits of the BID128 encoding
      * @return the number of bytes written
      */
-    public static int bid128ToString(byte[] out, long bid128Hi, long bid128Lo) {
-        return decodeBid128toBytes(out, bid128Hi, bid128Lo);
+    public static int bid128ToAscii(byte[] out, long bid128Hi, long bid128Lo) {
+        // IEEE754-2019 Table 3.6-Decimal2 Interchange format parameters -- p 23
+        final int k = 128; // storage width in bits
+        // final int p = 34; // precision in digits
+        // final int emax = 6144;
+        final int bias = 6176;
+        final int w5 = 17; // w+5, combination field width in bits
+        final int t = 110; // trailing significand field width in bits
+        assert 1 + w5 + t == k;
+
+        // 1 + 17 + 110 == 128
+        // 1 bit for the sign
+        boolean sign = (bid128Hi < 0L);
+        // w5 bit combination field ... for bid128 0x1FFFF
+        int combination = ((int) (bid128Hi >> (t - 64))) & 0x1FFFF;
+        long coeffTHi = bid128Hi & ((1L << t) - 1L);
+
+        long coeffHi;
+        int qExp;
+        // if the top 2 bits are not 0b11
+        if ((combination >> (w5 - 2)) != 0b11) {
+            //  IEEE754-2019 3.5.2 c) 2) i) -- p 21
+            //   If G0 and G1 together are one of 00, 01, or 10, then the biased
+            //   exponent E is formed from G0 through Gw+1 and the significand
+            //   is formed from bits Gw+2 through the end of the encoding (including T).
+            //
+            // w+5=17 w=12 Gw+1=G13 Gw+2=G14
+            // the top 14 bits of the combination field represent the biased exponent ...
+            int biasedExponentE = combination >> 3;
+            qExp = biasedExponentE - bias;
+            // ... and the bottom 3 bits are the most significant bits of the significand
+            // coeff/significand is 3 + 110 == 113 ... but that's not all ... see below
+            coeffHi = (long) (combination & 0x07);
+        } else if ((combination >> (w5 - 4)) != 0b1111) {
+            // IEEE754-2019 3.5.2 c) 2) ii) -- p 21
+            //  If G0 and G1 together are 11 and G2 and G3 together are one
+            //  of 00, 01, or 10, then the biased exponent E is formed from
+            //  G2 through Gw+3 and the significand is formed by prefixing
+            //  the 4 bits (8 + Gw+4) to T.
+            //
+            // w+5=17 w=12 Gw+3=G15 Gw+4=G16
+            //
+            int biasedExponentE = (combination >>> 1) & ((1 << (w5 - 5 + 2)) - 1);
+            qExp = biasedExponentE - bias;
+            coeffHi = 8L + (long) (combination & 1);
+        } else if ((combination >> (w5 - 5)) == 0b11110) {
+            // if the top 5 bits are 0b11110 then Infinity
+            return infBytes(out, sign);
+        } else if ((combination >> (w5 - 5)) == 0b11111) {
+            // if the top 5 bits are 0x11111 then NaN
+            // with the next bit determining signaling NaN
+            long payloadHi = coeffTHi;
+            long payloadLo = bid128Lo;
+            boolean isSignaling = (((combination >> (w5 - 6)) & 1) != 0);
+            return nanBytes(out, sign, isSignaling, payloadHi, payloadLo);
+        } else {
+            // all possible cases were covered above
+            throw new IllegalStateException();
+        }
+        long dw1 = ((coeffHi << (t - 64)) | coeffTHi);
+        long dw0 = bid128Lo;
+        // IEEE754-2019 3.5.2 p21
+        //  If the value exceeds the maximum, the significand c is
+        //  non-canonical and the value used for c is zero.
+        if ((dw1 | dw0) == 0L ||
+            unsignedLT(MAXX_COEFF_34_HI, dw1) ||
+            (dw1 == MAXX_COEFF_34_HI && unsignedLT(MAXX_COEFF_34_LO - 1L, dw0))
+        )
+            return zerBytes(out, sign, qExp);
+        return fnzBytes(out, sign, qExp, dw1, dw0);
     }
 
     /**
      * Render a DPD128 value into a caller-supplied buffer, allocating nothing.
      *
-     * <p>The peer of {@link #bid128ToString(byte[], long, long)}, with the same
+     * <p>The peer of {@link #bid128ToAscii(byte[], long, long)}, with the same
      * buffer contract and the same output for peer encodings of a value.
      *
      * @param out       the destination, at least {@link #MAX_LEN} bytes
@@ -200,8 +277,66 @@ public final class Decimal128TextCodec {
      * @param dpd128Lo  low 64 bits of the DPD128 encoding
      * @return the number of bytes written
      */
-    public static int dpd128ToString(byte[] out, long dpd128Hi, long dpd128Lo) {
-        return decodeDpd128toBytes(out, dpd128Hi, dpd128Lo);
+    public static int dpd128ToAscii(byte[] out, long dpd128Hi, long dpd128Lo) {
+        final int bias = 6176;
+        final int w = 12;  // exponent continuation width
+        final int w5 = 17; // combination field width in bits
+        final int t = 110; // trailing significand field width in bits
+
+        boolean sign = (dpd128Hi < 0L);
+        int combination = ((int) (dpd128Hi >> (t - 64))) & 0x1FFFF;
+        // in DPD the low w bits of the biased exponent always sit at the bottom of G
+        int expContinuation = combination & 0x0FFF;
+
+        long d0;
+        int qExp;
+        boolean isNaN = false;
+        boolean isSignaling = false;
+
+        if ((combination >> (w5 - 2)) != 0b11) {
+            // G0G1 is 00, 01 or 10: leading digit 0..7, exponent MSBs in G0G1
+            int expMSB = combination >> (w5 - 2);
+            qExp = ((expMSB << w) | expContinuation) - bias;
+            d0 = (long) ((combination >> w) & 0b111);
+        } else if ((combination >> (w5 - 4)) != 0b1111) {
+            // G0G1 is 11 and G2G3 is not 11: leading digit 8..9, exponent MSBs in G2G3
+            int expMSB = (combination >> (w5 - 4)) & 0b11;
+            qExp = ((expMSB << w) | expContinuation) - bias;
+            d0 = 8L + (long) ((combination >> w) & 0b1);
+        } else if ((combination >> (w5 - 5)) == 0b11110) {
+            return infBytes(out, sign);
+        } else {
+            assert (combination >> (w5 - 5)) == 0b11111;
+            isNaN = true;
+            isSignaling = (((combination >> (w5 - 6)) & 1) != 0);
+            d0 = 0L;
+            qExp = 0;
+        }
+
+        // Rebuild the binary coefficient from the declets. The leading digit
+        // rides along as a sixth declet of the high group: values 0..9 encode
+        // to themselves as a declet, so it decodes back unchanged.
+        long decletsHi = (d0 << 50) | ((dpd128Hi & 0x3FFFFFFFFFFFL) << 4) | (dpd128Lo >>> 60);
+        long decletsLo = dpd128Lo & 0x0FFFFFFFFFFFFFFFL; // low 60 bits, six declets
+        long binHi = binFromDeclets(decletsHi);
+        long binLo = binFromDeclets(decletsLo);
+
+        long dw1;
+        long dw0;
+        if (binHi == 0L) {
+            dw1 = 0L;
+            dw0 = binLo;
+        } else {
+            dw0 = (binHi * TEN_POW_18) + binLo;
+            long carry = (unsignedLT(dw0, binLo)) ? 1L : 0L;
+            dw1 = unsignedMulHi(binHi, TEN_POW_18) + carry;
+        }
+
+        if (isNaN)
+            return nanBytes(out, sign, isSignaling, dw1, dw0);
+        if ((dw1 | dw0) == 0L)
+            return zerBytes(out, sign, qExp);
+        return fnzBytes(out, sign, qExp, dw1, dw0);
     }
 
     /**
@@ -315,32 +450,6 @@ public final class Decimal128TextCodec {
     private static final byte ascii_dot = 0x2E;
     private static final byte ascii_E = 0x45;
 
-    /**
-     * Decode a BID128 bit pattern to its decimal string form.
-     *
-     * <p>Renders through {@link #decodeBid128toBytes} into a scratch buffer and
-     * wraps the bytes it wrote. Field extraction, class dispatch and every leaf
-     * renderer live there; this exists only to hand back a {@code String}.
-     */
-    private static String decodeBid128toString(long bid128Hi, long bid128Lo) {
-        byte[] ascii = new byte[MAX_LEN];
-        int len = decodeBid128toBytes(ascii, bid128Hi, bid128Lo);
-        return new String(ascii, 0, len, StandardCharsets.ISO_8859_1);
-    }
-
-    /**
-     * Decode a DPD128 bit pattern to its decimal string form.
-     *
-     * <p>The peer of {@link #decodeBid128toString}, and the same arrangement:
-     * all the work is {@link #decodeDpd128toBytes}; this only wraps the bytes
-     * it wrote.
-     */
-    private static String decodeDpd128toString(long dpd128Hi, long dpd128Lo) {
-        byte[] ascii = new byte[MAX_LEN];
-        int len = decodeDpd128toBytes(ascii, dpd128Hi, dpd128Lo);
-        return new String(ascii, 0, len, StandardCharsets.ISO_8859_1);
-    }
-
     /* ----------------------------------------------------------------------
      * Rendering into the caller's buffer
      *
@@ -365,147 +474,7 @@ public final class Decimal128TextCodec {
 
     private static final byte ascii_s = 0x73;
 
-    /**
-     * The peer of {@link #decodeBid128toString}, writing into the caller's
-     * buffer. Identical field extraction; only the four leaf calls differ.
-     */
-    private static int decodeBid128toBytes(byte[] out, long bid128Hi, long bid128Lo) {
-        // IEEE754-2019 Table 3.6-Decimal2 Interchange format parameters -- p 23
-        final int k = 128; // storage width in bits
-        // final int p = 34; // precision in digits
-        // final int emax = 6144;
-        final int bias = 6176;
-        final int w5 = 17; // w+5, combination field width in bits
-        final int t = 110; // trailing significand field width in bits
-        assert 1 + w5 + t == k;
 
-        // 1 + 17 + 110 == 128
-        // 1 bit for the sign
-        boolean sign = (bid128Hi < 0L);
-        // w5 bit combination field ... for bid128 0x1FFFF
-        int combination = ((int) (bid128Hi >> (t - 64))) & 0x1FFFF;
-        long coeffTHi = bid128Hi & ((1L << t) - 1L);
-
-        long coeffHi;
-        int qExp;
-        // if the top 2 bits are not 0b11
-        if ((combination >> (w5 - 2)) != 0b11) {
-            //  IEEE754-2019 3.5.2 c) 2) i) -- p 21
-            //   If G0 and G1 together are one of 00, 01, or 10, then the biased
-            //   exponent E is formed from G0 through Gw+1 and the significand
-            //   is formed from bits Gw+2 through the end of the encoding (including T).
-            //
-            // w+5=17 w=12 Gw+1=G13 Gw+2=G14
-            // the top 14 bits of the combination field represent the biased exponent ...
-            int biasedExponentE = combination >> 3;
-            qExp = biasedExponentE - bias;
-            // ... and the bottom 3 bits are the most significant bits of the significand
-            // coeff/significand is 3 + 110 == 113 ... but that's not all ... see below
-            coeffHi = (long) (combination & 0x07);
-        } else if ((combination >> (w5 - 4)) != 0b1111) {
-            // IEEE754-2019 3.5.2 c) 2) ii) -- p 21
-            //  If G0 and G1 together are 11 and G2 and G3 together are one
-            //  of 00, 01, or 10, then the biased exponent E is formed from
-            //  G2 through Gw+3 and the significand is formed by prefixing
-            //  the 4 bits (8 + Gw+4) to T.
-            //
-            // w+5=17 w=12 Gw+3=G15 Gw+4=G16
-            //
-            int biasedExponentE = (combination >>> 1) & ((1 << (w5 - 5 + 2)) - 1);
-            qExp = biasedExponentE - bias;
-            coeffHi = 8L + (long) (combination & 1);
-        } else if ((combination >> (w5 - 5)) == 0b11110) {
-            // if the top 5 bits are 0b11110 then Infinity
-            return infBytes(out, sign);
-        } else if ((combination >> (w5 - 5)) == 0b11111) {
-            // if the top 5 bits are 0x11111 then NaN
-            // with the next bit determining signaling NaN
-            long payloadHi = coeffTHi;
-            long payloadLo = bid128Lo;
-            boolean isSignaling = (((combination >> (w5 - 6)) & 1) != 0);
-            return nanBytes(out, sign, isSignaling, payloadHi, payloadLo);
-        } else {
-            // all possible cases were covered above
-            throw new IllegalStateException();
-        }
-        long dw1 = ((coeffHi << (t - 64)) | coeffTHi);
-        long dw0 = bid128Lo;
-        // IEEE754-2019 3.5.2 p21
-        //  If the value exceeds the maximum, the significand c is
-        //  non-canonical and the value used for c is zero.
-        if ((dw1 | dw0) == 0L ||
-            unsignedLT(MAXX_COEFF_34_HI, dw1) ||
-            (dw1 == MAXX_COEFF_34_HI && unsignedLT(MAXX_COEFF_34_LO - 1L, dw0))
-        )
-            return zerBytes(out, sign, qExp);
-        return fnzBytes(out, sign, qExp, dw1, dw0);
-    }
-
-    /**
-     * The peer of {@link #decodeDpd128toString}, writing into the caller's
-     * buffer. Identical field extraction; only the four leaf calls differ.
-     */
-    private static int decodeDpd128toBytes(byte[] out, long dpd128Hi, long dpd128Lo) {
-        final int bias = 6176;
-        final int w = 12;  // exponent continuation width
-        final int w5 = 17; // combination field width in bits
-        final int t = 110; // trailing significand field width in bits
-
-        boolean sign = (dpd128Hi < 0L);
-        int combination = ((int) (dpd128Hi >> (t - 64))) & 0x1FFFF;
-        // in DPD the low w bits of the biased exponent always sit at the bottom of G
-        int expContinuation = combination & 0x0FFF;
-
-        long d0;
-        int qExp;
-        boolean isNaN = false;
-        boolean isSignaling = false;
-
-        if ((combination >> (w5 - 2)) != 0b11) {
-            // G0G1 is 00, 01 or 10: leading digit 0..7, exponent MSBs in G0G1
-            int expMSB = combination >> (w5 - 2);
-            qExp = ((expMSB << w) | expContinuation) - bias;
-            d0 = (long) ((combination >> w) & 0b111);
-        } else if ((combination >> (w5 - 4)) != 0b1111) {
-            // G0G1 is 11 and G2G3 is not 11: leading digit 8..9, exponent MSBs in G2G3
-            int expMSB = (combination >> (w5 - 4)) & 0b11;
-            qExp = ((expMSB << w) | expContinuation) - bias;
-            d0 = 8L + (long) ((combination >> w) & 0b1);
-        } else if ((combination >> (w5 - 5)) == 0b11110) {
-            return infBytes(out, sign);
-        } else {
-            assert (combination >> (w5 - 5)) == 0b11111;
-            isNaN = true;
-            isSignaling = (((combination >> (w5 - 6)) & 1) != 0);
-            d0 = 0L;
-            qExp = 0;
-        }
-
-        // Rebuild the binary coefficient from the declets. The leading digit
-        // rides along as a sixth declet of the high group: values 0..9 encode
-        // to themselves as a declet, so it decodes back unchanged.
-        long decletsHi = (d0 << 50) | ((dpd128Hi & 0x3FFFFFFFFFFFL) << 4) | (dpd128Lo >>> 60);
-        long decletsLo = dpd128Lo & 0x0FFFFFFFFFFFFFFFL; // low 60 bits, six declets
-        long binHi = binFromDeclets(decletsHi);
-        long binLo = binFromDeclets(decletsLo);
-
-        long dw1;
-        long dw0;
-        if (binHi == 0L) {
-            dw1 = 0L;
-            dw0 = binLo;
-        } else {
-            dw0 = (binHi * TEN_POW_18) + binLo;
-            long carry = (unsignedLT(dw0, binLo)) ? 1L : 0L;
-            dw1 = unsignedMulHi(binHi, TEN_POW_18) + carry;
-        }
-
-        if (isNaN)
-            return nanBytes(out, sign, isSignaling, dw1, dw0);
-        if ((dw1 | dw0) == 0L)
-            return zerBytes(out, sign, qExp);
-        return fnzBytes(out, sign, qExp, dw1, dw0);
-    }
 
 
     private static final byte[] INFINITY_TEXT = "Infinity".getBytes(StandardCharsets.ISO_8859_1);

@@ -143,10 +143,10 @@ public class TestCorpusVectors {
                 label + " line " + row.lineNumber + ": bid #" + row.bidHex);
             assertEquals(row.text, Decimal128TextCodec.dpd128ToString(row.dpdHi(), row.dpdLo()),
                 label + " line " + row.lineNumber + ": dpd #" + row.dpdHex);
-            int bidLen = Decimal128TextCodec.bid128ToString(buf, row.bidHi(), row.bidLo());
+            int bidLen = Decimal128TextCodec.bid128ToAscii(buf, row.bidHi(), row.bidLo());
             assertEquals(row.text, new String(buf, 0, bidLen, StandardCharsets.ISO_8859_1),
                 label + " line " + row.lineNumber + ": bid into buffer #" + row.bidHex);
-            int dpdLen = Decimal128TextCodec.dpd128ToString(buf, row.dpdHi(), row.dpdLo());
+            int dpdLen = Decimal128TextCodec.dpd128ToAscii(buf, row.dpdHi(), row.dpdLo());
             assertEquals(row.text, new String(buf, 0, dpdLen, StandardCharsets.ISO_8859_1),
                 label + " line " + row.lineNumber + ": dpd into buffer #" + row.dpdHex);
         }
