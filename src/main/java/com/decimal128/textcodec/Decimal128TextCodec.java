@@ -545,6 +545,9 @@ public final class Decimal128TextCodec {
      * The only renderers. Both output forms land here: the caller-buffer
      * methods return what these write, and the String methods wrap it.
      *
+     * These leaf renderers know nothing about BID or DPD: both decoders
+     * reduce an encoding to (sign, qExp, coefficient) and hand it here.
+     *
      * The two once had String-producing peers, so that "Infinity", a bare
      * NaN and every plain-form zero could come back as interned constants at
      * zero bytes allocated. That cost a second copy of the field extraction
@@ -926,7 +929,7 @@ public final class Decimal128TextCodec {
             }
         }
         while (remainingDigitCount > 0) {
-            long divTen = (t * 0xCCCCCCCDL) >>> 35;
+            long divTen = (t * M_U32_DIV_1E1) >>> S_U32_DIV_1E1;
             int digit = (int) (t - (divTen * 10L));
             ascii[--ib] = (byte) ('0' + digit);
             t = divTen;
@@ -1585,7 +1588,7 @@ public final class Decimal128TextCodec {
         long dw0,
         int residue
     ) {
-        // IEEE 754 7.5 Underflow - handle subnormal region
+        // IEEE 754-2019 7.5 Underflow -- the subnormal region
         assert qExp < -6176;
         int truncationNeeded = -6176 - qExp;
         int digitLen = calcDigitLen128(dw1, dw0);
@@ -1747,8 +1750,9 @@ public final class Decimal128TextCodec {
     /**
      * Decode a 10-bit DPD declet (bits 9..0) into {@code 0..999}.
      *
-     * <p>Mapping: bit9..bit0 as {@code p q r s t u v w x y}. Handles non-canonical
-     * declets as well as canonical ones, per Cowlishaw's dpd2bcd.
+     * <p>Mapping: bit9..bit0 as {@code p q r s t u v w x y}. Accepts the 24
+     * non-canonical declets as well as the 1000 canonical ones, per
+     * Cowlishaw's dpd2bcd.
      */
     private static long dpdDecodeDeclet(long declet) {
         assert declet >= 0L && declet <= 1023L;
@@ -1910,8 +1914,15 @@ public final class Decimal128TextCodec {
     /**
      * Powers of 10 from {@code 10^0} through {@code 10^34} as 128-bit unsigned
      * values in little-endian order: {@code POW10[2*i]} is the low 64 bits,
-     * {@code POW10[2*i + 1]} the high 64 bits, of {@code 10^i}. Sized to the
-     * BID128 coefficient bound.
+     * {@code POW10[2*i + 1]} the high 64 bits, of {@code 10^i}.
+     *
+     * <p>Sized to the coefficient bound and indexed directly -- no mask, no
+     * padding. Every reachable index is at most 34: the binding case is
+     * {@link #calcDigitLen128}, whose input is always a coefficient or NaN
+     * payload below {@code 10^34}, so {@code bitLen <= 113} and
+     * {@code (bitLen * 1233) >>> 12 <= 34}. It doubles as the {@code 5^n}
+     * source for the divide kernel, since {@code 10^n >>> n} is exactly
+     * {@code 5^n}; there is no POW5 table.
      */
     private static final long[] POW10 = {
         // little-endian order
