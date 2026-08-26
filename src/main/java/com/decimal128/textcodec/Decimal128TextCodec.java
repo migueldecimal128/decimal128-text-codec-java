@@ -443,7 +443,7 @@ public final class Decimal128TextCodec {
             throw new IllegalArgumentException("out must have length >= 2, was " + out.length);
         String errorStr = encodeStringOrError(out, true, str);
         if (errorStr != null) {
-            out[0] = 0x7C00000000000000L;
+            out[0] = QNAN_PATTERN_HI;
             out[1] = 0x0000000000000000L;
         }
         return errorStr;
@@ -513,7 +513,7 @@ public final class Decimal128TextCodec {
             throw new IllegalArgumentException("out must have length >= 2, was " + out.length);
         String errorStr = encodeStringOrError(out, false, str);
         if (errorStr != null) {
-            out[0] = 0x7C00000000000000L;
+            out[0] = QNAN_PATTERN_HI;
             out[1] = 0x0000000000000000L;
         }
         return errorStr;
@@ -532,6 +532,14 @@ public final class Decimal128TextCodec {
     // 33 nines
     private static final long MAX_PAYLOAD_HI = MIN_PRECISION_34_COEFF_HI;
     private static final long MAX_PAYLOAD_LO = MIN_PRECISION_34_COEFF_LO - 1L;
+
+    // The encoding's fixed bit patterns. SIGN_BIT is the sibling ports'
+    // 0x8000000000000000 spelled as Long.MIN_VALUE, which is that pattern in a
+    // signed dword -- the same reason this file carries unsignedMulHi and >>>.
+    private static final long SIGN_BIT = Long.MIN_VALUE;
+    private static final long INF_PATTERN_HI = 0x7800000000000000L;
+    private static final long QNAN_PATTERN_HI = 0x7C00000000000000L;
+    private static final long SNAN_PATTERN_HI = 0x7E00000000000000L;
 
     private static final byte ascii_minus = 0x2D;
     private static final byte ascii_plus = 0x2B;
@@ -1003,7 +1011,7 @@ public final class Decimal128TextCodec {
         }
         if (ch != '\0' || (chPrevCode != 'f' && chPrevCode != 'y'))
             return "failure parsing Infinity";
-        out[0] = 0x7800000000000000L | ((sign) ? Long.MIN_VALUE : 0L);
+        out[0] = INF_PATTERN_HI | ((sign) ? SIGN_BIT : 0L);
         out[1] = 0L;
         return null;
     }
@@ -1122,7 +1130,7 @@ public final class Decimal128TextCodec {
     private static void bid128SetNaN(long[] out, boolean sign,
                                      boolean isSignaling, long payloadDw1, long payloadDw0) {
         long withoutPayload =
-            ((isSignaling) ? 0x7E00000000000000L : 0x7C00000000000000L) | ((sign) ? Long.MIN_VALUE : 0L);
+            ((isSignaling) ? SNAN_PATTERN_HI : QNAN_PATTERN_HI) | ((sign) ? SIGN_BIT : 0L);
         out[0] = withoutPayload | payloadDw1;
         out[1] = payloadDw0;
     }
@@ -1504,7 +1512,7 @@ public final class Decimal128TextCodec {
         assert qExp >= -6176 && qExp <= 6111;
         assert calcDigitLen128(dw1, dw0) <= 34;
         long qBiased = (long) (qExp + 6176);
-        long s = (sign) ? Long.MIN_VALUE : 0L;
+        long s = (sign) ? SIGN_BIT : 0L;
         long g = qBiased << (3 + 46);
         out[0] = s | g | dw1;
         out[1] = dw0;
@@ -1514,7 +1522,7 @@ public final class Decimal128TextCodec {
      * Encode {@code Infinity} (or {@code -Infinity}) into {@code out}.
      */
     private static void finalizeOverflow(long[] out, boolean sign) {
-        out[0] = ((sign) ? Long.MIN_VALUE : 0L) | 0x7800000000000000L;
+        out[0] = ((sign) ? SIGN_BIT : 0L) | INF_PATTERN_HI;
         out[1] = 0L;
     }
 
