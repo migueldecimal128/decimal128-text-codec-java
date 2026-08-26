@@ -1004,7 +1004,7 @@ public final class Decimal128TextCodec {
                 if (ch == -1)
                     break;
                 else
-                    return "failure parsing infinity";
+                    return "failure parsing Infinity";
             }
             chPrevCode = ch | 0x20;
             ch = codeAt(str, pos++);
