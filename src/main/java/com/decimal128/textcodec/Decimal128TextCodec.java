@@ -74,7 +74,7 @@ import java.nio.charset.StandardCharsets;
  *
  * All functions are pure and safe for concurrent use.
  *
- * <h2>In this port</h2>
+ * <h2>This implementation</h2>
  *
  * The renderers return a {@code String}; their {@code bid128ToAscii} and
  * {@code dpd128ToAscii} peers write into a caller-owned {@code byte[]} and
@@ -84,8 +84,7 @@ import java.nio.charset.StandardCharsets;
  * one file with no external runtime dependencies. Internal-consistency
  * claims — the ones unreachable for any input — are spelled as Java
  * {@code assert}, so they cost nothing unless the JVM is started with
- * {@code -ea}; the sibling ports spell the same claims as
- * {@code verify(...)} behind a compile-time flag.
+ * {@code -ea}.
  */
 public final class Decimal128TextCodec {
 
@@ -185,9 +184,8 @@ public final class Decimal128TextCodec {
      * checks: with slack, an error in the arithmetic above would quietly
      * consume the slack instead of firing.
      *
-     * <p>A buffer passed to {@code bid128ToAscii} must be at least this long. The
-     * C port's {@code D128TEXT_MAX_LEN} is one larger, because it writes a NUL
-     * and this does not.
+     * <p>A buffer passed to {@code bid128ToAscii} must be at least this long.
+     * No NUL is written, so no room is reserved for one.
      */
     public static final int MAX_LEN = 42;
 
@@ -533,9 +531,9 @@ public final class Decimal128TextCodec {
     private static final long MAX_PAYLOAD_HI = MIN_PRECISION_34_COEFF_HI;
     private static final long MAX_PAYLOAD_LO = MIN_PRECISION_34_COEFF_LO - 1L;
 
-    // The encoding's fixed bit patterns. SIGN_BIT is the sibling ports'
-    // 0x8000000000000000 spelled as Long.MIN_VALUE, which is that pattern in a
-    // signed dword -- the same reason this file carries unsignedMulHi and >>>.
+    // The encoding's fixed bit patterns. SIGN_BIT is 0x8000000000000000
+    // spelled as Long.MIN_VALUE, which is that pattern in a signed dword --
+    // the same reason this file carries unsignedMulHi and >>>.
     private static final long SIGN_BIT = Long.MIN_VALUE;
     private static final long INF_PATTERN_HI = 0x7800000000000000L;
     private static final long QNAN_PATTERN_HI = 0x7C00000000000000L;
@@ -949,12 +947,14 @@ public final class Decimal128TextCodec {
     // -- encode from String --------------------------------------------------------
 
     /**
-     * The character at {@code index}, or NUL past the end of the string. The
-     * parsers walk a NUL-terminated view of the input, so end-of-input is one
-     * more character value rather than a bound test at every read.
+     * The code of the character at {@code index}, or -1 past the end of the
+     * string. The parsers walk the input as character codes, so end-of-input
+     * is one more code value rather than a bound test at every read. -1 is
+     * not a character, which keeps NUL an ordinary input character -- and an
+     * invalid one -- instead of doubling as the terminator.
      */
-    private static char charOrNul(String str, int index) {
-        return (index < str.length()) ? str.charAt(index) : '\0';
+    private static int codeAt(String str, int index) {
+        return (index >= 0 && index < str.length()) ? str.charAt(index) : -1;
     }
 
     /**
@@ -971,19 +971,19 @@ public final class Decimal128TextCodec {
      */
     private static String encodeStringOrError(long[] out, boolean formatIsBid, String str) {
         int pos = 0;
-        char chFirst = charOrNul(str, pos++);
-        char ch = chFirst;
+        int chFirst = codeAt(str, pos++);
+        int ch = chFirst;
         boolean sign = (ch == '-');
         if (ch == '+' || ch == '-')
-            ch = charOrNul(str, pos++);
+            ch = codeAt(str, pos++);
         if ((ch >= '0' && ch <= '9') || ch == '.')
             return parseFiniteValueText(out, formatIsBid, sign, ch, str, pos);
-        char chLower = (char) (ch | 0x20);
+        int chLower = ch | 0x20;
         if (chLower == 'i')
             return parseInfinityText(out, sign, ch, str, pos);
         if (chLower == 'n' || chLower == 's' || chLower == 'q')
             return parseNanText(out, formatIsBid, sign, ch, str, pos);
-        if (chFirst == '\0')
+        if (chFirst == -1)
             return "empty string";
         return "invalid format";
     }
@@ -993,23 +993,23 @@ public final class Decimal128TextCodec {
      * case-insensitively, and write the corresponding encoding into
      * {@code out}. Returns an error string for any other input.
      */
-    private static String parseInfinityText(long[] out, boolean sign, char chFirst, String str, int startPos) {
+    private static String parseInfinityText(long[] out, boolean sign, int chFirst, String str, int startPos) {
         int pos = startPos;
-        char ch = chFirst;
+        int ch = chFirst;
         int chPrevCode = 0;
         final String target = "infinity";
         for (int i = 0; i < 8; ++i) {
             int targetCode = target.charAt(i);
             if ((ch | 0x20) != targetCode) {
-                if (ch == '\0')
+                if (ch == -1)
                     break;
                 else
                     return "failure parsing infinity";
             }
             chPrevCode = ch | 0x20;
-            ch = charOrNul(str, pos++);
+            ch = codeAt(str, pos++);
         }
-        if (ch != '\0' || (chPrevCode != 'f' && chPrevCode != 'y'))
+        if (ch != -1 || (chPrevCode != 'f' && chPrevCode != 'y'))
             return "failure parsing Infinity";
         out[0] = INF_PATTERN_HI | ((sign) ? SIGN_BIT : 0L);
         out[1] = 0L;
@@ -1029,8 +1029,7 @@ public final class Decimal128TextCodec {
      * {@code NaN(1}, {@code NaN(1]} and {@code NaN()} are all rejected, and
      * {@code NaN[1]} and {@code NaN{1}} are not this form at all.
      *
-     * <p>The full decimal128 ports accept the same spelling; the codecs had it
-     * first, and the ports took it on 2026-08-23. The reason it exists at all
+     * <p>The reason this spelling exists at all
      * is that C's own {@code strtod} reads
      * {@code NAN(n-char-sequence)}, so the spelling reaches a caller from the
      * platform itself. The resemblance stops at the parentheses -- strtod's
@@ -1042,25 +1041,25 @@ public final class Decimal128TextCodec {
      * <p>The legacy base skipped the six bracket characters ANYWHERE, so it
      * read {@code NaN(1)2(3)} as payload 123. That is not this, and stays rejected.
      */
-    private static String parseNanText(long[] out, boolean formatIsBid, boolean sign, char chFirst, String str, int startPos) {
+    private static String parseNanText(long[] out, boolean formatIsBid, boolean sign, int chFirst, String str, int startPos) {
         int pos = startPos;
-        char ch = chFirst;
+        int ch = chFirst;
         boolean hasS = ((ch | 0x20) == 's');
         boolean hasQ = ((ch | 0x20) == 'q');
         if (hasQ || hasS)
-            ch = charOrNul(str, pos++);
+            ch = codeAt(str, pos++);
         if (((ch | 0x20) != 'n') ||
-            ((charOrNul(str, pos++) | 0x20) != 'a') ||
-            ((charOrNul(str, pos++) | 0x20) != 'n')
+            ((codeAt(str, pos++) | 0x20) != 'a') ||
+            ((codeAt(str, pos++) | 0x20) != 'n')
         )
             return "failure parsing NaN";
         long payloadDw0 = 0L;
         long payloadDw1 = 0L;
-        ch = charOrNul(str, pos++);
+        ch = codeAt(str, pos++);
         boolean hasParen = (ch == '(');
         if (hasParen)
-            ch = charOrNul(str, pos++);
-        if (hasParen || ch != '\0') {
+            ch = codeAt(str, pos++);
+        if (hasParen || ch != -1) {
             int accumDigitCount = 0;
             long accum19a = 0L;
             long accum19b = 0L;
@@ -1077,17 +1076,17 @@ public final class Decimal128TextCodec {
                     accum19a = (accum19a * 10L) + (long) d;
                 else
                     accum19b = (accum19b * 10L) + (long) d;
-                ch = charOrNul(str, pos++);
+                ch = codeAt(str, pos++);
             }
             if (accumDigitCount == 0)
                 return (hasParen) ? "failure parsing NaN" : "non-digit NaN payload character";
             if (hasParen) {
                 // the ')' must be present and must end the input
                 if (ch != ')')
-                    return (ch == '\0') ? "failure parsing NaN" : "non-digit NaN payload character";
-                if (charOrNul(str, pos++) != '\0')
+                    return (ch == -1) ? "failure parsing NaN" : "non-digit NaN payload character";
+                if (codeAt(str, pos++) != -1)
                     return "failure parsing NaN";
-            } else if (ch != '\0') {
+            } else if (ch != -1) {
                 return "non-digit NaN payload character";
             }
             if (accumDigitCount > 33) {
@@ -1182,7 +1181,7 @@ public final class Decimal128TextCodec {
         long[] out,
         boolean formatIsBid,
         boolean sign,
-        char chFirst,
+        int chFirst,
         String str,
         int startPos
     ) {
@@ -1198,8 +1197,8 @@ public final class Decimal128TextCodec {
         boolean prevWasDigit = false;
         boolean afterUnderscore = false;
 
-        assert chFirst != '\0';
-        char ch = chFirst;
+        assert chFirst != -1;
+        int ch = chFirst;
         int fractionalDigitCount = 0;
         long accum19a = 0L;
         long accum19b = 0L;
@@ -1236,7 +1235,7 @@ public final class Decimal128TextCodec {
                 hasDot = true;
                 prevWasDigit = false;
             }
-            ch = charOrNul(str, pos++);
+            ch = codeAt(str, pos++);
         }
         if (afterUnderscore)
             return "invalid underscore location";
@@ -1244,10 +1243,10 @@ public final class Decimal128TextCodec {
             return "no coefficient digit";
         // this path has at least one digit
         if (ch == 'E' || ch == 'e') {
-            ch = charOrNul(str, pos++);
+            ch = codeAt(str, pos++);
             if (ch == '+' || ch == '-') {
                 expSign = (ch == '-');
-                ch = charOrNul(str, pos++);
+                ch = codeAt(str, pos++);
             }
             boolean hasExpDigit = false;
             int expSignificantDigitCount = 0;
@@ -1269,7 +1268,7 @@ public final class Decimal128TextCodec {
                     prevWasDigit = true;
                     afterUnderscore = false;
                 }
-                ch = charOrNul(str, pos++);
+                ch = codeAt(str, pos++);
             }
             if (afterUnderscore)
                 return "invalid underscore location";
@@ -1279,7 +1278,7 @@ public final class Decimal128TextCodec {
             if (expSignificantDigitCount > 4)
                 exp = 9999;
         }
-        if (ch != '\0')
+        if (ch != -1)
             return "unexpected char";
         // we have at least one digit
         long dw0 = accum19a;
@@ -1382,7 +1381,7 @@ public final class Decimal128TextCodec {
         // never once executed -- and therefore has never been verified to work
         // -- it is removed and the invariant is enforced.
         //
-        // Measured on the C port, which is a translation of this file: zero
+        // Measured: zero
         // executions across the 87k-row shared corpus, 400,000 random
         // numerals, and 76,280 finalize calls driven by inputs of up to 5,000
         // digits, where the widest coefficient ever seen here was 34.
@@ -1392,8 +1391,7 @@ public final class Decimal128TextCodec {
         // coefficient silently. It cannot fire on a caller's data -- no input
         // reaches it -- only on a future caller that breaks the invariant, which
         // is exactly when a loud failure is wanted. A caller that is not a parser
-        // needs the truncation step back; it is live in every full port's
-        // Finalize, where multiply and FMA do reach it.
+        // needs the truncation step back, as a multiply or an FMA would.
         if (calcDigitLen128(dw1In, dw0In) > 34)
             throw new IllegalStateException("coefficient wider than the 34-digit precision limit");
 
@@ -1711,7 +1709,7 @@ public final class Decimal128TextCodec {
     // arithmetic compiles to 2,814 bytes against 16,784 for the equivalent
     // tables -- the JVM has no array-literal constant, so a table becomes
     // per-element initialisation bytecode -- and it allocates nothing at
-    // runtime and transcribes unchanged into the sibling ports.
+    // runtime.
 
     private static final long TEN_POW_15 = 1_000_000_000_000_000L;
     private static final long TEN_POW_18 = 1_000_000_000_000_000_000L;
@@ -1730,7 +1728,7 @@ public final class Decimal128TextCodec {
         while (rest != 0L) {
             bin += dpdDecodeDeclet(rest & 0x3FFL) * multiplier;
             // The last iteration multiplies past 10^18 and the product is never
-            // used, since rest is zero by then. The reference wraps here too.
+            // used, since rest is zero by then, so it is let wrap.
             multiplier *= 1000L;
             rest = rest >>> 10;
         }
@@ -2029,8 +2027,8 @@ public final class Decimal128TextCodec {
     /**
      * The high 64 bits of the 128-bit unsigned product {@code x * y}.
      *
-     * <p>The sibling ports carry a hand-rolled 32x32 decomposition here, because
-     * their targets have no such primitive to reach for. The JDK does:
+     * <p>A hand-rolled 32x32 decomposition would do this where no widening
+     * multiply is available. The JDK has one:
      * {@code Math.unsignedMultiplyHigh} is this exact function, and HotSpot
      * intrinsifies it to the machine's widening multiply. Every call site is
      * unchanged; only the body is.
