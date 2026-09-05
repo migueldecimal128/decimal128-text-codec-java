@@ -433,6 +433,17 @@ public final class Decimal128TextCodec {
 
     // -- decode to String --------------------------------------------------------
 
+    /* ----------------------------------------------------------------------
+     * Format constants -- IEEE 754-2019 Table 3.6, decimal128
+     * -------------------------------------------------------------------- */
+
+    private static final int K_WIDTH = 128; // storage width in bits
+    private static final int BIAS = 6176;
+    private static final int Q_MIN = -6176; // the minimum quantum exponent
+    private static final int Q_MAX = 6111;  // the maximum quantum exponent
+    private static final int T_WIDTH = 110; // trailing significand field width in bits
+    private static final int W5 = 17;       // combination field width in bits
+
     // 10**34 ... has 35 digits ... maxx = max eXclusive
     private static final long MAXX_COEFF_34_HI = 0x0001ED09BEAD87C0L;
     private static final long MAXX_COEFF_34_LO = 0x378D8E6400000000L;
@@ -497,13 +508,9 @@ public final class Decimal128TextCodec {
      */
     private static int decodeBid128toAscii(byte[] out, long bid128Hi, long bid128Lo) {
         // IEEE754-2019 Table 3.6-Decimal2 Interchange format parameters -- p 23
-        final int k = 128; // storage width in bits
         // final int p = 34; // precision in digits
         // final int emax = 6144;
-        final int bias = 6176;
-        final int w5 = 17; // w+5, combination field width in bits
-        final int t = 110; // trailing significand field width in bits
-        assert 1 + w5 + t == k;
+        assert 1 + W5 + T_WIDTH == K_WIDTH;
 
         // The API's contract is a buffer of at least MAX_LEN, so that is what
         // is checked -- once, on every call, rather than per value. A shorter
@@ -515,14 +522,14 @@ public final class Decimal128TextCodec {
         // 1 + 17 + 110 == 128
         // 1 bit for the sign
         boolean sign = (bid128Hi < 0L);
-        // w5 bit combination field ... for bid128 0x1FFFF
-        int combination = ((int) (bid128Hi >> (t - 64))) & 0x1FFFF;
-        long coeffTHi = bid128Hi & ((1L << t) - 1L);
+        // W5 bit combination field ... for bid128 0x1FFFF
+        int combination = ((int) (bid128Hi >> (T_WIDTH - 64))) & 0x1FFFF;
+        long coeffTHi = bid128Hi & ((1L << T_WIDTH) - 1L);
 
         long coeffHi;
         int qExp;
         // if the top 2 bits are not 0b11
-        if ((combination >> (w5 - 2)) != 0b11) {
+        if ((combination >> (W5 - 2)) != 0b11) {
             //  IEEE754-2019 3.5.2 c) 2) i) -- p 21
             //   If G0 and G1 together are one of 00, 01, or 10, then the biased
             //   exponent E is formed from G0 through Gw+1 and the significand
@@ -531,11 +538,11 @@ public final class Decimal128TextCodec {
             // w+5=17 w=12 Gw+1=G13 Gw+2=G14
             // the top 14 bits of the combination field represent the biased exponent ...
             int biasedExponentE = combination >> 3;
-            qExp = biasedExponentE - bias;
+            qExp = biasedExponentE - BIAS;
             // ... and the bottom 3 bits are the most significant bits of the significand
             // coeff/significand is 3 + 110 == 113 ... but that's not all ... see below
             coeffHi = (long) (combination & 0x07);
-        } else if ((combination >> (w5 - 4)) != 0b1111) {
+        } else if ((combination >> (W5 - 4)) != 0b1111) {
             // IEEE754-2019 3.5.2 c) 2) ii) -- p 21
             //  If G0 and G1 together are 11 and G2 and G3 together are one
             //  of 00, 01, or 10, then the biased exponent E is formed from
@@ -544,24 +551,24 @@ public final class Decimal128TextCodec {
             //
             // w+5=17 w=12 Gw+3=G15 Gw+4=G16
             //
-            int biasedExponentE = (combination >>> 1) & ((1 << (w5 - 5 + 2)) - 1);
-            qExp = biasedExponentE - bias;
+            int biasedExponentE = (combination >>> 1) & ((1 << (W5 - 5 + 2)) - 1);
+            qExp = biasedExponentE - BIAS;
             coeffHi = 8L + (long) (combination & 1);
-        } else if ((combination >> (w5 - 5)) == 0b11110) {
+        } else if ((combination >> (W5 - 5)) == 0b11110) {
             // if the top 5 bits are 0b11110 then Infinity
             return infBytes(out, sign);
-        } else if ((combination >> (w5 - 5)) == 0b11111) {
+        } else if ((combination >> (W5 - 5)) == 0b11111) {
             // if the top 5 bits are 0x11111 then NaN
             // with the next bit determining signaling NaN
             long payloadHi = coeffTHi;
             long payloadLo = bid128Lo;
-            boolean isSignaling = (((combination >> (w5 - 6)) & 1) != 0);
+            boolean isSignaling = (((combination >> (W5 - 6)) & 1) != 0);
             return nanBytes(out, sign, isSignaling, payloadHi, payloadLo);
         } else {
             // all possible cases were covered above
             throw new IllegalStateException();
         }
-        long dw1 = ((coeffHi << (t - 64)) | coeffTHi);
+        long dw1 = ((coeffHi << (T_WIDTH - 64)) | coeffTHi);
         long dw0 = bid128Lo;
         // IEEE754-2019 3.5.2 p21
         //  If the value exceeds the maximum, the significand c is
@@ -583,10 +590,7 @@ public final class Decimal128TextCodec {
      * interchange format.
      */
     private static int decodeDpd128toAscii(byte[] out, long dpd128Hi, long dpd128Lo) {
-        final int bias = 6176;
         final int w = 12;  // exponent continuation width
-        final int w5 = 17; // combination field width in bits
-        final int t = 110; // trailing significand field width in bits
 
         // The API's contract is a buffer of at least MAX_LEN, so that is what
         // is checked -- once, on every call, rather than per value. A shorter
@@ -596,7 +600,7 @@ public final class Decimal128TextCodec {
         demand(out.length >= MAX_LEN, "the buffer is at least MAX_LEN bytes");
 
         boolean sign = (dpd128Hi < 0L);
-        int combination = ((int) (dpd128Hi >> (t - 64))) & 0x1FFFF;
+        int combination = ((int) (dpd128Hi >> (T_WIDTH - 64))) & 0x1FFFF;
         // in DPD the low w bits of the biased exponent always sit at the bottom of G
         int expContinuation = combination & 0x0FFF;
 
@@ -605,22 +609,22 @@ public final class Decimal128TextCodec {
         boolean isNaN = false;
         boolean isSignaling = false;
 
-        if ((combination >> (w5 - 2)) != 0b11) {
+        if ((combination >> (W5 - 2)) != 0b11) {
             // G0G1 is 00, 01 or 10: leading digit 0..7, exponent MSBs in G0G1
-            int expMSB = combination >> (w5 - 2);
-            qExp = ((expMSB << w) | expContinuation) - bias;
+            int expMSB = combination >> (W5 - 2);
+            qExp = ((expMSB << w) | expContinuation) - BIAS;
             d0 = (long) ((combination >> w) & 0b111);
-        } else if ((combination >> (w5 - 4)) != 0b1111) {
+        } else if ((combination >> (W5 - 4)) != 0b1111) {
             // G0G1 is 11 and G2G3 is not 11: leading digit 8..9, exponent MSBs in G2G3
-            int expMSB = (combination >> (w5 - 4)) & 0b11;
-            qExp = ((expMSB << w) | expContinuation) - bias;
+            int expMSB = (combination >> (W5 - 4)) & 0b11;
+            qExp = ((expMSB << w) | expContinuation) - BIAS;
             d0 = 8L + (long) ((combination >> w) & 0b1);
-        } else if ((combination >> (w5 - 5)) == 0b11110) {
+        } else if ((combination >> (W5 - 5)) == 0b11110) {
             return infBytes(out, sign);
         } else {
-            assert (combination >> (w5 - 5)) == 0b11111;
+            assert (combination >> (W5 - 5)) == 0b11111;
             isNaN = true;
-            isSignaling = (((combination >> (w5 - 6)) & 1) != 0);
+            isSignaling = (((combination >> (W5 - 6)) & 1) != 0);
             d0 = 0L;
             qExp = 0;
         }
@@ -1230,7 +1234,7 @@ public final class Decimal128TextCodec {
         long declets6Lo = decletsFromBin(binLo);
 
         int gField = (0b11111 << 12) | ((isSignaling) ? (1 << 11) : 0);
-        int signCombo = (((sign) ? 1 : 0) << 17) | gField;
+        int signCombo = (((sign) ? 1 : 0) << W5) | gField;
         out[0] = (((long) signCombo) << 46) | (declets5Hi >>> 4);
         out[1] = (declets5Hi << 60) | declets6Lo;
     }
@@ -1432,7 +1436,7 @@ public final class Decimal128TextCodec {
             }
             // Step 2: zero coefficient with out-of-range qExp ... clamp qExp
             if ((dw1In | dw0In) == 0L) {
-                int qClamped = Math.max(Math.min(qExpIn, 6111), -6176);
+                int qClamped = Math.max(Math.min(qExpIn, Q_MAX), Q_MIN);
                 setFinite(out, formatIsBid, sign, qClamped, 0L, 0L);
                 return;
             }
@@ -1472,7 +1476,7 @@ public final class Decimal128TextCodec {
 
         // Step 4: underflow. With no precision truncation to outrank it, the
         // test is simply whether the exponent is below the minimum.
-        if (qExpIn < -6176) {
+        if (qExpIn < Q_MIN) {
             finalizeUnderflowRegion(out, formatIsBid, sign, qExpIn, dw1In, dw0In, residueIn);
             return;
         }
@@ -1498,10 +1502,10 @@ public final class Decimal128TextCodec {
         }
 
         // step 7: check final bounds
-        assert qExp >= -6176;
+        assert qExp >= Q_MIN;
         assert calcDigitLen128(dw1, dw0) <= 34;
-        if (qExp > 6111) {
-            int qExcess = qExp - 6111;
+        if (qExp > Q_MAX) {
+            int qExcess = qExp - Q_MAX;
             int digitLen = calcDigitLen128(dw1, dw0);
             if (digitLen + qExcess <= 34)
                 finalizeClamping(out, formatIsBid, sign, qExp, dw1, dw0);
@@ -1539,7 +1543,7 @@ public final class Decimal128TextCodec {
      * <p>{@code out} doubles as scratch for the two divisions before it is written.
      */
     private static void dpd128SetFinite(long[] out, boolean sign, int qExp, long dw1, long dw0) {
-        assert qExp >= -6176 && qExp <= 6111;
+        assert qExp >= Q_MIN && qExp <= Q_MAX;
         assert calcDigitLen128(dw1, dw0) <= 34;
 
         // Split the coefficient into its low 18 digits and its high 16.
@@ -1557,14 +1561,14 @@ public final class Decimal128TextCodec {
         long declets6Lo = decletsFromBin(binLo);
         assert d0 >= 0L && d0 <= 9L;
 
-        int biasedQExp = qExp + 6176;
+        int biasedQExp = qExp + BIAS;
         int expMSB = (biasedQExp >> 12) & 0x3;
         int expLSB = biasedQExp & 0x0FFF;
         int gPrefix =
             (d0 <= 7L)
                 ? (expMSB << 3) | (int) d0                        // G0G1 = exponent MSBs
                 : 0b11000 | (expMSB << 1) | (((int) d0) & 1);     // G0G1 = 11, digit is 8 or 9
-        int signCombo = (((sign) ? 1 : 0) << 17) | (gPrefix << 12) | expLSB;
+        int signCombo = (((sign) ? 1 : 0) << W5) | (gPrefix << 12) | expLSB;
 
         out[0] = (((long) signCombo) << 46) | (declets5Hi >>> 4);
         out[1] = (declets5Hi << 60) | declets6Lo;
@@ -1582,9 +1586,9 @@ public final class Decimal128TextCodec {
      * [-6176, 6111] and the coefficient must have at most 34 decimal digits.
      */
     private static void bid128SetFinite(long[] out, boolean sign, int qExp, long dw1, long dw0) {
-        assert qExp >= -6176 && qExp <= 6111;
+        assert qExp >= Q_MIN && qExp <= Q_MAX;
         assert calcDigitLen128(dw1, dw0) <= 34;
-        long qBiased = (long) (qExp + 6176);
+        long qBiased = (long) (qExp + BIAS);
         long s = (sign) ? SIGN_BIT : 0L;
         long g = qBiased << (3 + 46);
         out[0] = s | g | dw1;
@@ -1613,7 +1617,7 @@ public final class Decimal128TextCodec {
      * and produces the clamped encoding.
      */
     private static void finalizeClamping(long[] out, boolean formatIsBid, boolean sign, int qExp, long dw1, long dw0) {
-        int qExcess = qExp - 6111;
+        int qExcess = qExp - Q_MAX;
         assert qExcess > 0 && qExcess <= 34 - calcDigitLen128(dw1, dw0);
         int pow10Offset = qExcess << 1;
         long y1 = POW10[pow10Offset + 1];
@@ -1624,8 +1628,8 @@ public final class Decimal128TextCodec {
         long pp01Lo = dw0 * y1;
         long dw0Scaled = pp00Lo;
         long dw1Scaled = pp00Hi + pp10Lo + pp01Lo;
-        assert coeffQExpFit(dw1Scaled, dw0Scaled, 6111);
-        setFinite(out, formatIsBid, sign, 6111, dw1Scaled, dw0Scaled);
+        assert coeffQExpFit(dw1Scaled, dw0Scaled, Q_MAX);
+        setFinite(out, formatIsBid, sign, Q_MAX, dw1Scaled, dw0Scaled);
     }
 
     /**
@@ -1638,9 +1642,9 @@ public final class Decimal128TextCodec {
      * compares against the precomputed POW10[34] constant.
      */
     private static boolean coeffQExpFit(long dw1, long dw0, int qExp) {
-        if (qExp < -6176 || qExp > 6111)
+        if (qExp < Q_MIN || qExp > Q_MAX)
             return false;
-        if (Long.numberOfLeadingZeros(dw1) > 128 - 113)
+        if (Long.numberOfLeadingZeros(dw1) > K_WIDTH - 113)
             return true;
         int pow10Offset = 34 << 1;
         long maxxHi = POW10[pow10Offset + 1];
@@ -1670,14 +1674,14 @@ public final class Decimal128TextCodec {
         int residue
     ) {
         // IEEE 754-2019 7.5 Underflow -- the subnormal region
-        assert qExp < -6176;
-        int truncationNeeded = -6176 - qExp;
+        assert qExp < Q_MIN;
+        int truncationNeeded = Q_MIN - qExp;
         int digitLen = calcDigitLen128(dw1, dw0);
         assert digitLen <= 34;
         if (truncationNeeded > digitLen) {
             // Result is swamped - becomes zero with roundTiesToEven
             // This is always inexact
-            roundAndFinalizeFinite(out, formatIsBid, sign, -6176, 0L, 0L, LT_HALF);
+            roundAndFinalizeFinite(out, formatIsBid, sign, Q_MIN, 0L, 0L, LT_HALF);
         } else if (truncationNeeded == digitLen) {
             finalizeUnderflowBoundary(out, formatIsBid, sign, dw1, dw0, residue);
         } else {
@@ -1706,21 +1710,21 @@ public final class Decimal128TextCodec {
         int totalResidue = residueMerge(scaleResidue, residueIn);
         // roundTiesToEven ...
         // only if we are GT_HALF since otherwise the result is 0 ... which is even
-        setFinite(out, formatIsBid, sign, -6176, 0L, (totalResidue == GT_HALF) ? 1L : 0L);
+        setFinite(out, formatIsBid, sign, Q_MIN, 0L, (totalResidue == GT_HALF) ? 1L : 0L);
     }
 
     private static void finalizeSubnormal(
         long[] out, boolean formatIsBid, boolean sign, int qExpIn,
         long dw1In, long dw0In, int residueIn
     ) {
-        int truncationNeeded = -6176 - qExpIn;
+        int truncationNeeded = Q_MIN - qExpIn;
         assert truncationNeeded > 0 && truncationNeeded < calcDigitLen128(dw1In, dw0In);
 
         int scaleResidue = u128ScaleDownPow10(out, dw1In, dw0In, truncationNeeded);
         int totalResidue = residueMerge(scaleResidue, residueIn);
         long dw1T = out[0];
         long dw0T = out[1];
-        int qExpT = -6176;
+        int qExpT = Q_MIN;
 
         boolean roundUp =
             (totalResidue == GT_HALF || (totalResidue == HALF && (dw0T & 1L) != 0L));
