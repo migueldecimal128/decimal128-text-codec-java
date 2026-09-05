@@ -91,6 +91,36 @@ public final class Decimal128TextCodec {
     private Decimal128TextCodec() {
     }
 
+    /* ----------------------------------------------------------------------
+     * Internal-state assertions
+     *
+     * Two mechanisms: one is a debugging aid, the other a claim that must hold
+     * in every build.
+     *
+     *   assert   internal-consistency claims -- unreachable for ANY input, so a
+     *            failure is a codec bug rather than bad data. The JVM drops
+     *            these unless it is started with -ea, so a consumer embedding
+     *            this class never takes a throw on data they do not control.
+     *            The test task arms them.
+     *
+     *   demand   the two claims that must hold in every configuration: that the
+     *            caller's buffer is at least MAX_LEN, checked once on entry,
+     *            and that a coefficient handed to the encoder is inside the
+     *            precision limit. These stay live, because the alternative is
+     *            overrunning the buffer or silently encoding an out-of-range
+     *            value.
+     * -------------------------------------------------------------------- */
+
+    private static void demand(boolean condition, String message) {
+        if (!condition)
+            impossible(message);
+    }
+
+    private static void impossible(String message) {
+        throw new IllegalStateException(
+            "decimal128-text-codec: impossible state: " + message);
+    }
+
     /**
      * Render a BID128 encoding as a decimal character sequence.
      *
@@ -179,10 +209,12 @@ public final class Decimal128TextCodec {
      * exponent field cannot exceed four digits inside decimal128's range, so
      * neither number can drift without the format itself changing.
      *
-     * <p>Every write in the renderers is guarded against this bound. Sizing it
-     * exactly rather than generously is what turns those guards into real
-     * checks: with slack, an error in the arithmetic above would quietly
-     * consume the slack instead of firing.
+     * <p>The renderers are checked against this bound once, on entry, rather
+     * than at every write: the buffer is confirmed to be at least this long
+     * and the forms above are what guarantee nothing longer is produced.
+     * Sizing it exactly rather than generously is what keeps the two halves
+     * of that argument in contact; with slack, an error in the arithmetic
+     * above would quietly consume the slack instead of showing up.
      *
      * <p>A buffer passed to {@code bid128ToAscii} must be at least this long.
      * No NUL is written, so no room is reserved for one.
@@ -196,9 +228,10 @@ public final class Decimal128TextCodec {
      * <p>Writes the ASCII text into {@code out} starting at index 0 and returns
      * its length; the text is {@code out[0]} through {@code out[n - 1]}. No
      * terminator is written. {@code out} must be at least {@code MAX_LEN}
-     * long; a shorter one throws {@code ArrayIndexOutOfBoundsException} on the
-     * first write past its end rather than corrupting anything, so an
-     * undersized buffer is a caller bug that surfaces immediately.
+     * long; a shorter one throws {@code IllegalStateException} on entry rather
+     * than corrupting anything, so an undersized buffer is a caller bug that
+     * surfaces immediately -- on every call, not only on the values that
+     * would have overflowed it.
      *
      * <p>The text is identical to what {@code bid128ToString} returns, and this
      * form is the one to reach for when the destination is bytes — a stream, a
@@ -227,9 +260,10 @@ public final class Decimal128TextCodec {
      * <p>Writes the ASCII text into {@code out} starting at index 0 and returns
      * its length; the text is {@code out[0]} through {@code out[n - 1]}. No
      * terminator is written. {@code out} must be at least {@code MAX_LEN}
-     * long; a shorter one throws {@code ArrayIndexOutOfBoundsException} on the
-     * first write past its end rather than corrupting anything, so an
-     * undersized buffer is a caller bug that surfaces immediately.
+     * long; a shorter one throws {@code IllegalStateException} on entry rather
+     * than corrupting anything, so an undersized buffer is a caller bug that
+     * surfaces immediately -- on every call, not only on the values that
+     * would have overflowed it.
      *
      * <p>The text is identical to what {@code dpd128ToString} returns, and this
      * form is the one to reach for when the destination is bytes — a stream, a
@@ -471,6 +505,13 @@ public final class Decimal128TextCodec {
         final int t = 110; // trailing significand field width in bits
         assert 1 + w5 + t == k;
 
+        // The API's contract is a buffer of at least MAX_LEN, so that is what
+        // is checked -- once, on every call, rather than per value. A shorter
+        // buffer that happens to fit the value in hand is still a caller bug,
+        // and one that would otherwise surface only on the data that overflows
+        // it.
+        demand(out.length >= MAX_LEN, "the buffer is at least MAX_LEN bytes");
+
         // 1 + 17 + 110 == 128
         // 1 bit for the sign
         boolean sign = (bid128Hi < 0L);
@@ -546,6 +587,13 @@ public final class Decimal128TextCodec {
         final int w = 12;  // exponent continuation width
         final int w5 = 17; // combination field width in bits
         final int t = 110; // trailing significand field width in bits
+
+        // The API's contract is a buffer of at least MAX_LEN, so that is what
+        // is checked -- once, on every call, rather than per value. A shorter
+        // buffer that happens to fit the value in hand is still a caller bug,
+        // and one that would otherwise surface only on the data that overflows
+        // it.
+        demand(out.length >= MAX_LEN, "the buffer is at least MAX_LEN bytes");
 
         boolean sign = (dpd128Hi < 0L);
         int combination = ((int) (dpd128Hi >> (t - 64))) & 0x1FFFF;
@@ -1420,8 +1468,7 @@ public final class Decimal128TextCodec {
         // reaches it -- only on a future caller that breaks the invariant, which
         // is exactly when a loud failure is wanted. A caller that is not a parser
         // needs the truncation step back, as a multiply or an FMA would.
-        if (calcDigitLen128(dw1In, dw0In) > 34)
-            throw new IllegalStateException("coefficient wider than the 34-digit precision limit");
+        demand(calcDigitLen128(dw1In, dw0In) <= 34, "coefficient wider than precision");
 
         // Step 4: underflow. With no precision truncation to outrank it, the
         // test is simply whether the exponent is below the minimum.
