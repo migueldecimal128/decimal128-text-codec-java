@@ -1058,13 +1058,13 @@ public final class Decimal128TextCodec {
      * {@code NaN[1]} and {@code NaN{1}} are not this form at all.
      *
      * <p>The reason this spelling exists at all
-     * is that C's own {@code strtod} reads
+     * is that the platform's own {@code strtod} reads
      * {@code NAN(n-char-sequence)}, so the spelling reaches a caller from the
      * platform itself. The resemblance stops at the parentheses -- strtod's
      * sequence is letters, digits and underscores read as an
      * implementation-defined integer ({@code NAN(abc)} and {@code NAN(0x1c8)} are legal
      * there), while a decimal128 payload is decimal digits. This is a
-     * paren-tolerant spelling of our own payload syntax, not C's.
+     * paren-tolerant spelling of our own payload syntax, not strtod's.
      *
      * <p>The legacy base skipped the six bracket characters ANYWHERE, so it
      * read {@code NaN(1)2(3)} as payload 123. That is not this, and stays rejected.
