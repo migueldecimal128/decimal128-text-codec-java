@@ -166,12 +166,12 @@ public final class Decimal128TextCodec {
      *
      * <p>The output is the GDAS {@code to-scientific-string} form: integer
      * notation when the quantum exponent is zero (e.g. {@code "123"}), plain
-     * notation when the adjusted exponent is in the range -6 to 0 (e.g.
-     * {@code "123.45"}), normalized scientific notation otherwise (e.g.
-     * {@code "1.234E+5"}). The exponent sign is always written, as in
-     * {@code "6.02E+23"}. Cohort information is preserved: {@code "1.00"} and
-     * {@code "1.0"} are distinct outputs from distinct encodings of the same
-     * numerical value.
+     * notation when the quantum exponent is negative and the adjusted
+     * exponent is at least -6 (e.g. {@code "123.45"}), normalized scientific
+     * notation otherwise (e.g. {@code "1.234E+5"}). The exponent sign is
+     * always written, as in {@code "6.02E+23"}. Cohort information is
+     * preserved: {@code "1.00"} and {@code "1.0"} are distinct outputs from
+     * distinct encodings of the same numerical value.
      *
      * <p>Special values render as {@code "Infinity"}, {@code "-Infinity"},
      * {@code "NaN"} and {@code "sNaN"}, each with an optional sign and an
@@ -202,12 +202,12 @@ public final class Decimal128TextCodec {
      *
      * <p>The output is the GDAS {@code to-scientific-string} form: integer
      * notation when the quantum exponent is zero (e.g. {@code "123"}), plain
-     * notation when the adjusted exponent is in the range -6 to 0 (e.g.
-     * {@code "123.45"}), normalized scientific notation otherwise (e.g.
-     * {@code "1.234E+5"}). The exponent sign is always written, as in
-     * {@code "6.02E+23"}. Cohort information is preserved: {@code "1.00"} and
-     * {@code "1.0"} are distinct outputs from distinct encodings of the same
-     * numerical value.
+     * notation when the quantum exponent is negative and the adjusted
+     * exponent is at least -6 (e.g. {@code "123.45"}), normalized scientific
+     * notation otherwise (e.g. {@code "1.234E+5"}). The exponent sign is
+     * always written, as in {@code "6.02E+23"}. Cohort information is
+     * preserved: {@code "1.00"} and {@code "1.0"} are distinct outputs from
+     * distinct encodings of the same numerical value.
      *
      * <p>Special values render as {@code "Infinity"}, {@code "-Infinity"},
      * {@code "NaN"} and {@code "sNaN"}, each with an optional sign and an
