@@ -162,7 +162,7 @@ implementation for the family and itself descends from
 Where this port differs from the reference, in each case because the JDK
 already had the answer:
 
-- **`unsignedMulHi` is `Math.unsignedMultiplyHigh`.** The reference and most of
+- **`mulhi64` is `Math.unsignedMultiplyHigh`.** The reference and most of
   the siblings carry a hand-rolled 32×32 decomposition because their targets
   have no such primitive; HotSpot intrinsifies the JDK one to the machine's
   widening multiply. Every call site is identical to theirs; only that one body

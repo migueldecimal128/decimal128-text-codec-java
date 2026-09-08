@@ -348,14 +348,7 @@ public final class Decimal128TextCodec {
      * @throws IllegalArgumentException if {@code out.length < 2}
      */
     public static String bid128Parse(long[] out, String str) {
-        if (out.length < 2)
-            throw new IllegalArgumentException("out must have length >= 2, was " + out.length);
-        String errorStr = encodeStringOrError(out, true, str);
-        if (errorStr != null) {
-            out[0] = QNAN_PATTERN_HI;
-            out[1] = 0x0000000000000000L;
-        }
-        return errorStr;
+        return parseInto(out, true, str);
     }
 
     /**
@@ -421,9 +414,20 @@ public final class Decimal128TextCodec {
      * @throws IllegalArgumentException if {@code out.length < 2}
      */
     public static String dpd128Parse(long[] out, String str) {
+        return parseInto(out, false, str);
+    }
+
+    /*
+     * `out` is written on both paths -- the encoding on success, the canonical
+     * positive quiet NaN on failure -- so the caller never reads back what was
+     * there before the call. That is why a failure is reported beside the value
+     * rather than in place of it: a caller who discards the message still holds
+     * a legal IEEE 754-2019 datum.
+     */
+    private static String parseInto(long[] out, boolean formatIsBid, String str) {
         if (out.length < 2)
             throw new IllegalArgumentException("out must have length >= 2, was " + out.length);
-        String errorStr = encodeStringOrError(out, false, str);
+        String errorStr = encodeStringOrError(out, formatIsBid, str);
         if (errorStr != null) {
             out[0] = QNAN_PATTERN_HI;
             out[1] = 0x0000000000000000L;
@@ -458,7 +462,7 @@ public final class Decimal128TextCodec {
 
     // The encoding's fixed bit patterns. SIGN_BIT is 0x8000000000000000
     // spelled as Long.MIN_VALUE, which is that pattern in a signed dword --
-    // the same reason this file carries unsignedMulHi and >>>.
+    // the same reason this file carries mulhi64 and >>>.
     private static final long SIGN_BIT = Long.MIN_VALUE;
     private static final long INF_PATTERN_HI = 0x7800000000000000L;
     private static final long QNAN_PATTERN_HI = 0x7C00000000000000L;
@@ -556,14 +560,14 @@ public final class Decimal128TextCodec {
             coeffHi = 8L + (long) (combination & 1);
         } else if ((combination >> (W5 - 5)) == 0b11110) {
             // if the top 5 bits are 0b11110 then Infinity
-            return infBytes(out, sign);
+            return infAscii(out, sign);
         } else if ((combination >> (W5 - 5)) == 0b11111) {
             // if the top 5 bits are 0x11111 then NaN
             // with the next bit determining signaling NaN
             long payloadHi = coeffTHi;
             long payloadLo = bid128Lo;
             boolean isSignaling = (((combination >> (W5 - 6)) & 1) != 0);
-            return nanBytes(out, sign, isSignaling, payloadHi, payloadLo);
+            return nanAscii(out, sign, isSignaling, payloadHi, payloadLo);
         } else {
             // all possible cases were covered above
             throw new IllegalStateException();
@@ -577,8 +581,8 @@ public final class Decimal128TextCodec {
             unsignedLT(MAXX_COEFF_34_HI, dw1) ||
             (dw1 == MAXX_COEFF_34_HI && unsignedLT(MAXX_COEFF_34_LO - 1L, dw0))
         )
-            return zerBytes(out, sign, qExp);
-        return fnzBytes(out, sign, qExp, dw1, dw0);
+            return zerAscii(out, sign, qExp);
+        return fnzAscii(out, sign, qExp, dw1, dw0);
     }
 
     /**
@@ -620,7 +624,7 @@ public final class Decimal128TextCodec {
             qExp = ((expMSB << w) | expContinuation) - BIAS;
             d0 = 8L + (long) ((combination >> w) & 0b1);
         } else if ((combination >> (W5 - 5)) == 0b11110) {
-            return infBytes(out, sign);
+            return infAscii(out, sign);
         } else {
             assert (combination >> (W5 - 5)) == 0b11111;
             isNaN = true;
@@ -645,14 +649,14 @@ public final class Decimal128TextCodec {
         } else {
             dw0 = (binHi * TEN_POW_18) + binLo;
             long carry = (unsignedLT(dw0, binLo)) ? 1L : 0L;
-            dw1 = unsignedMulHi(binHi, TEN_POW_18) + carry;
+            dw1 = mulhi64(binHi, TEN_POW_18) + carry;
         }
 
         if (isNaN)
-            return nanBytes(out, sign, isSignaling, dw1, dw0);
+            return nanAscii(out, sign, isSignaling, dw1, dw0);
         if ((dw1 | dw0) == 0L)
-            return zerBytes(out, sign, qExp);
-        return fnzBytes(out, sign, qExp, dw1, dw0);
+            return zerAscii(out, sign, qExp);
+        return fnzAscii(out, sign, qExp, dw1, dw0);
     }
 
     private static final byte[] INFINITY_TEXT = "Infinity".getBytes(StandardCharsets.ISO_8859_1);
@@ -667,14 +671,14 @@ public final class Decimal128TextCodec {
      */
     private static final byte[] PLAIN_ZERO = "0.000000".getBytes(StandardCharsets.ISO_8859_1);
 
-    private static int infBytes(byte[] out, boolean sign) {
+    private static int infAscii(byte[] out, boolean sign) {
         int signLen = (sign) ? 1 : 0;
         out[0] = ascii_minus; // overwritten by the 'I' when unsigned
         System.arraycopy(INFINITY_TEXT, 0, out, signLen, INFINITY_TEXT.length);
         return signLen + INFINITY_TEXT.length;
     }
 
-    private static int nanBytes(
+    private static int nanAscii(
         byte[] out, boolean sign, boolean isSignaling,
         long payloadHi, long payloadLo
     ) {
@@ -696,7 +700,7 @@ public final class Decimal128TextCodec {
         return baseLen + digitLen;
     }
 
-    private static int zerBytes(byte[] out, boolean sign, int qExp) {
+    private static int zerAscii(byte[] out, boolean sign, int qExp) {
         int signLen = (sign) ? 1 : 0;
         out[0] = ascii_minus; // overwritten by the '0' when unsigned
         if (qExp <= 0 && qExp >= -6) {
@@ -706,24 +710,24 @@ public final class Decimal128TextCodec {
             return signLen + zeroLen;
         }
         // A positive exponent needs an explicit '+'; a negative one prints its
-        // own '-' from appendIntBytes. Write the '+' unconditionally and let
-        // appendIntBytes land on top of it when qExp < 0 -- the same discipline
+        // own '-' from appendInt. Write the '+' unconditionally and let
+        // appendInt land on top of it when qExp < 0 -- the same discipline
         // as the leading sign, pointed the other way. It is correct only
-        // because appendIntBytes emits a '-' for a negative value and emits
+        // because appendInt emits a '-' for a negative value and emits
         // nothing for a positive one, and because the plain form above has
         // already taken every qExp in [-6, 0], so this branch never sees zero.
         int plusLen = (qExp > 0) ? 1 : 0;
         int baseLen = signLen + ZERO_EXP_TEXT.length + plusLen;
         System.arraycopy(ZERO_EXP_TEXT, 0, out, signLen, ZERO_EXP_TEXT.length);
         out[signLen + ZERO_EXP_TEXT.length] = ascii_plus; // overwritten by the '-' when qExp < 0
-        return baseLen + appendIntBytes(out, baseLen, qExp);
+        return baseLen + appendInt(out, baseLen, qExp);
     }
 
     /**
      * Write a signed decimal exponent at {@code off}, returning its length.
      * The magnitude never exceeds 6176, so it is at most four digits.
      */
-    private static int appendIntBytes(byte[] out, int off, int v) {
+    private static int appendInt(byte[] out, int off, int v) {
         int signLen = 0;
         int magnitude = v;
         if (v < 0) {
@@ -744,17 +748,17 @@ public final class Decimal128TextCodec {
         return signLen + digitLen;
     }
 
-    private static int fnzBytes(byte[] out, boolean sign, int qExp, long dw1, long dw0) {
+    private static int fnzAscii(byte[] out, boolean sign, int qExp, long dw1, long dw0) {
         int digitLen = calcDigitLen128(dw1, dw0);
         int eExp = qExp + (digitLen - 1);
         if (qExp == 0)
-            return fnzToIntegerBytes(out, sign, digitLen, dw1, dw0);
+            return fnzToIntegerAscii(out, sign, digitLen, dw1, dw0);
         if (qExp <= 0 && eExp >= -6)
-            return fnzToDecimalPointBytes(out, sign, qExp, digitLen, dw1, dw0);
-        return fnzToNormalizedScientificBytes(out, sign, qExp, digitLen, dw1, dw0);
+            return fnzToDecimalPointAscii(out, sign, qExp, digitLen, dw1, dw0);
+        return fnzToNormalizedScientificAscii(out, sign, qExp, digitLen, dw1, dw0);
     }
 
-    private static int fnzToIntegerBytes(byte[] out, boolean sign, int digitLen, long dw1, long dw0) {
+    private static int fnzToIntegerAscii(byte[] out, boolean sign, int digitLen, long dw1, long dw0) {
         assert digitLen > 0;
         int signLen = (sign) ? 1 : 0;
         out[0] = ascii_minus; // overwritten by the first digit when unsigned
@@ -762,7 +766,7 @@ public final class Decimal128TextCodec {
         return signLen + digitLen;
     }
 
-    private static int fnzToDecimalPointBytes(
+    private static int fnzToDecimalPointAscii(
         byte[] out, boolean sign, int qExp,
         int digitLen, long dw1, long dw0
     ) {
@@ -781,7 +785,7 @@ public final class Decimal128TextCodec {
         return totalLen;
     }
 
-    private static int fnzToNormalizedScientificBytes(
+    private static int fnzToNormalizedScientificAscii(
         byte[] out, boolean sign, int qExp,
         int digitLen, long dw1, long dw0
     ) {
@@ -822,8 +826,8 @@ public final class Decimal128TextCodec {
      * Reciprocal-multiplication constants for unsigned {@code ÷ 10^8} on a 64-bit
      * dividend, exact for all non-negative inputs.
      *
-     * <p>Compute {@code n / 10^8} as {@code unsignedMulHi(n, M_U64_DIV_1E8) >>> S_U64_DIV_1E8}.
-     * The {@code S_U64_DIV_1E8} shift is "+ 64 high" because {@code unsignedMulHi} already
+     * <p>Compute {@code n / 10^8} as {@code mulhi64(n, M_U64_DIV_1E8) >>> S_U64_DIV_1E8}.
+     * The {@code S_U64_DIV_1E8} shift is "+ 64 high" because {@code mulhi64} already
      * returns the upper 64 bits of the 128-bit product; the named shift
      * combines with that to give the effective magic-number divide.
      */
@@ -841,7 +845,7 @@ public final class Decimal128TextCodec {
      * <ol>
      *  <li>While {@code dw1T != 0}: peel 8 digits per outer iteration via three
      *     {@code ÷ 10^8} divisions on rotating 96-bit chunks, using
-     *     {@link #unsignedMulHi} for the high half of each multi-word divide.
+     *     {@link #mulhi64} for the high half of each multi-word divide.
      *
      *  <li>Once the value fits in 64 bits: peel 8 digits at a time via a
      *     single {@code ÷ 10^8} per iteration.
@@ -865,13 +869,13 @@ public final class Decimal128TextCodec {
         int ich = off + digitPrintCount;
         int remainingDigitCount = digitPrintCount;
         while (dw1T != 0L) {
-            long q2 = unsignedMulHi(dw1T, M_U64_DIV_1E8) >>> S_U64_DIV_1E8;
+            long q2 = mulhi64(dw1T, M_U64_DIV_1E8) >>> S_U64_DIV_1E8;
             long r2 = dw1T - (q2 * 1_0000_0000L);
             long s2 = (r2 << 32) | (dw0T >>> 32);
-            long q1 = unsignedMulHi(s2, M_U64_DIV_1E8) >>> S_U64_DIV_1E8;
+            long q1 = mulhi64(s2, M_U64_DIV_1E8) >>> S_U64_DIV_1E8;
             long r1 = s2 - (q1 * 1_0000_0000L);
             long s1 = (r1 << 32) | (dw0T & MASK32L);
-            long q0 = unsignedMulHi(s1, M_U64_DIV_1E8) >>> S_U64_DIV_1E8;
+            long q0 = mulhi64(s1, M_U64_DIV_1E8) >>> S_U64_DIV_1E8;
             long r0 = s1 - (q0 * 1_0000_0000L);
             dw0T = (q1 << 32) + q0;
             dw1T = q2;
@@ -880,7 +884,7 @@ public final class Decimal128TextCodec {
             remainingDigitCount -= 8;
         }
         while (remainingDigitCount >= 8) {
-            long t0 = unsignedMulHi(dw0T, M_U64_DIV_1E8) >>> S_U64_DIV_1E8;
+            long t0 = mulhi64(dw0T, M_U64_DIV_1E8) >>> S_U64_DIV_1E8;
             long r0 = dw0T - (t0 * 1_0000_0000L);
             dw0T = t0;
             render8DigitsBeforeIndex(r0, ascii, ich);
@@ -929,7 +933,7 @@ public final class Decimal128TextCodec {
      * are not within {@code ascii}.
      */
     private static void render8DigitsBeforeIndex(long dw, byte[] ascii, int offMaxx) {
-        long abcd = unsignedMulHi(dw, M_U64_DIV_1E4) >>> S_U64_DIV_1E4;
+        long abcd = mulhi64(dw, M_U64_DIV_1E4) >>> S_U64_DIV_1E4;
         long efgh = dw - (abcd * 10000L);
 
         long ab = (abcd * M_U32_DIV_1E2) >>> S_U32_DIV_1E2;
@@ -994,7 +998,7 @@ public final class Decimal128TextCodec {
         int remainingDigitCount = renderDigitCount;
         int ib = offMaxx;
         while (remainingDigitCount >= 4) {
-            long t0 = unsignedMulHi(t, M_U64_DIV_1E4) >>> S_U64_DIV_1E4;
+            long t0 = mulhi64(t, M_U64_DIV_1E4) >>> S_U64_DIV_1E4;
             long abcd = t - (t0 * 10000L);
             t = t0;
             long ab = (abcd * M_U32_DIV_1E2) >>> S_U32_DIV_1E2;
@@ -1038,6 +1042,14 @@ public final class Decimal128TextCodec {
     }
 
     /**
+     * The digit test, spelled out once. {@code Character.isDigit} is
+     * Unicode-aware and has no counterpart on the {@code int} the reader yields.
+     */
+    private static boolean isDigit(int ch) {
+        return ch >= '0' && ch <= '9';
+    }
+
+    /**
      * Top-level dispatcher for parsing a decimal character sequence into an
      * encoding. Reads optional sign, then dispatches by leading character
      * to the finite-value, infinity, or NaN parser.
@@ -1056,7 +1068,7 @@ public final class Decimal128TextCodec {
         boolean sign = (ch == '-');
         if (ch == '+' || ch == '-')
             ch = codeAt(str, pos++);
-        if ((ch >= '0' && ch <= '9') || ch == '.')
+        if (isDigit(ch) || ch == '.')
             return parseFiniteValueText(out, formatIsBid, sign, ch, str, pos);
         int chLower = ch | 0x20;
         if (chLower == 'i')
@@ -1143,7 +1155,7 @@ public final class Decimal128TextCodec {
             int accumDigitCount = 0;
             long accum19a = 0L;
             long accum19b = 0L;
-            while (ch >= '0' && ch <= '9') {
+            while (isDigit(ch)) {
                 int d = ch - '0';
                 // Count every digit written, leading zeros included. The
                 // 33-digit limit below is a limit on the payload as spelled,
@@ -1284,8 +1296,8 @@ public final class Decimal128TextCodec {
         long accum19b = 0L;
         int exp = 0;
 
-        while ((ch >= '0' && ch <= '9') || ch == '.' || ch == '_') {
-            if (ch >= '0' && ch <= '9') {
+        while (isDigit(ch) || ch == '.' || ch == '_') {
+            if (isDigit(ch)) {
                 int d = ch - '0';
                 hasCoefficientDigit = true;
                 // count while flushing leading zeros
@@ -1332,7 +1344,7 @@ public final class Decimal128TextCodec {
             int expSignificantDigitCount = 0;
             prevWasDigit = false;
             afterUnderscore = false;
-            while ((ch >= '0' && ch <= '9') || ch == '_') {
+            while (isDigit(ch) || ch == '_') {
                 if (ch == '_') {
                     if (!prevWasDigit)
                         return "INVALID_UNDERSCORE_LOCATION";
@@ -1622,7 +1634,7 @@ public final class Decimal128TextCodec {
         int pow10Offset = qExcess << 1;
         long y1 = POW10[pow10Offset + 1];
         long y0 = POW10[pow10Offset];
-        long pp00Hi = unsignedMulHi(dw0, y0);
+        long pp00Hi = mulhi64(dw0, y0);
         long pp00Lo = dw0 * y0;
         long pp10Lo = dw1 * y0;
         long pp01Lo = dw0 * y1;
@@ -1826,7 +1838,7 @@ public final class Decimal128TextCodec {
         int shift = 0;
         while (rest != 0L) {
             // reciprocal-multiply divide by 1000
-            long q = unsignedMulHi(rest, 0x020C49BA5E353F7DL) >>> 3;
+            long q = mulhi64(rest, 0x020C49BA5E353F7DL) >>> 3;
             declets = declets | (dpdEncodeDeclet(rest - (q * 1000L)) << shift);
             shift += 10;
             rest = q;
@@ -2112,7 +2124,7 @@ public final class Decimal128TextCodec {
      * intrinsifies it to the machine's widening multiply. Every call site is
      * unchanged; only the body is.
      */
-    private static long unsignedMulHi(long x, long y) {
+    private static long mulhi64(long x, long y) {
         return Math.unsignedMultiplyHigh(x, y);
     }
 
@@ -2124,7 +2136,7 @@ public final class Decimal128TextCodec {
     private static void u128FmaPow10(long[] out, long x, int pow10, long a) {
         long y = POW10[pow10 << 1];
         long prodLo = x * y;
-        long prodHi = unsignedMulHi(x, y);
+        long prodHi = mulhi64(x, y);
         long sumLo = prodLo + a;
         long sumHi = prodHi + ((unsignedLT(sumLo, prodLo)) ? 1L : 0L);
         out[0] = sumHi;
