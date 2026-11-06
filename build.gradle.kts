@@ -1,3 +1,6 @@
+import com.vanniktech.maven.publish.JavaLibrary
+import com.vanniktech.maven.publish.JavadocJar
+import com.vanniktech.maven.publish.SourcesJar
 import org.gradle.plugins.signing.SigningExtension
 
 group = "com.decimal128"
@@ -18,8 +21,6 @@ java {
     toolchain {
         languageVersion = JavaLanguageVersion.of(21)
     }
-    withSourcesJar()
-    withJavadocJar()
 }
 
 dependencies {
@@ -46,6 +47,11 @@ tasks.test {
 }
 
 mavenPublishing {
+    // The plugin owns the sources and javadoc jars. Asking the `java` block for
+    // them too registers a second pair under the same names and the publication
+    // reads an output nothing declared it depends on.
+    configure(JavaLibrary(javadocJar = JavadocJar.Javadoc(), sourcesJar = SourcesJar.Sources()))
+
     publishToMavenCentral()
     signAllPublications()
     coordinates("com.decimal128", "decimal128-text-codec-java", version.toString())
