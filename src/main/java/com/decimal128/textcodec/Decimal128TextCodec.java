@@ -170,28 +170,25 @@ public final class Decimal128TextCodec {
     /**
      * Render a BID128 encoding as a decimal character sequence.
      *
-     * <p>The output is the GDAS {@code to-scientific-string} form: integer
-     * notation when the quantum exponent is zero (e.g. {@code "123"}), plain
-     * notation when the quantum exponent is negative and the adjusted
-     * exponent is at least -6 (e.g. {@code "123.45"}), normalized scientific
-     * notation otherwise (e.g. {@code "1.234E+5"}). The exponent sign is
-     * always written, as in {@code "6.02E+23"}. Cohort information is
-     * preserved: {@code "1.00"} and {@code "1.0"} are distinct outputs from
-     * distinct encodings of the same numerical value.
+     * The output is the GDAS {@code to-scientific-string} form: integer notation when the
+     * quantum exponent is zero (e.g. {@code "123"}), plain notation when the quantum exponent
+     * is negative and the adjusted exponent is at least -6 (e.g. {@code "123.45"}), normalized
+     * scientific notation otherwise (e.g. {@code "1.234E+5"}). The exponent sign is always
+     * written, as in {@code "6.02E+23"}. Cohort information is preserved: {@code "1.00"} and
+     * {@code "1.0"} are distinct outputs from distinct encodings of the same numerical value.
      *
-     * <p>Special values render as {@code "Infinity"}, {@code "-Infinity"},
-     * {@code "NaN"} and {@code "sNaN"}, each with an optional sign and an
-     * optional payload suffix such as {@code "NaN123"}.
+     * Special values render as {@code "Infinity"}, {@code "-Infinity"}, {@code "NaN"} and
+     * {@code "sNaN"}, each with an optional sign and an optional payload suffix such as {@code
+     * "NaN123"}.
      *
-     * <p>The two interchange encodings differ only in how the coefficient is
-     * stored: BID128 as a binary integer, DPD128 as a leading digit plus
-     * eleven 10-bit declets. The sign and the 14-bit biased exponent are the
-     * same in both, and peer encodings of the same value render to identical
-     * text.
+     * The two interchange encodings differ only in how the coefficient is stored: BID128 as a
+     * binary integer, DPD128 as a leading digit plus eleven 10-bit declets. The sign and the
+     * 14-bit biased exponent are the same in both, and peer encodings of the same value render
+     * to identical text.
      *
-     * <p>This cannot fail. Every 128-bit pattern renders: a non-canonical BID128
-     * coefficient (≥ 10^34) renders as zero at the encoded exponent, and a NaN
-     * payload ≥ 10^33 renders as no payload, both per IEEE 754-2019 §3.5.2.
+     * This cannot fail. Every 128-bit pattern renders: a non-canonical BID128 coefficient
+     * (&gt;= 10^34) renders as zero at the encoded exponent, and a NaN payload &gt;= 10^33
+     * renders as no payload, both per IEEE 754-2019 section 3.5.2.
      *
      * @param bid128Hi high 64 bits of the BID128 encoding
      * @param bid128Lo low 64 bits of the BID128 encoding
@@ -206,30 +203,26 @@ public final class Decimal128TextCodec {
     /**
      * Render a DPD128 encoding as a decimal character sequence.
      *
-     * <p>The output is the GDAS {@code to-scientific-string} form: integer
-     * notation when the quantum exponent is zero (e.g. {@code "123"}), plain
-     * notation when the quantum exponent is negative and the adjusted
-     * exponent is at least -6 (e.g. {@code "123.45"}), normalized scientific
-     * notation otherwise (e.g. {@code "1.234E+5"}). The exponent sign is
-     * always written, as in {@code "6.02E+23"}. Cohort information is
-     * preserved: {@code "1.00"} and {@code "1.0"} are distinct outputs from
-     * distinct encodings of the same numerical value.
+     * The output is the GDAS {@code to-scientific-string} form: integer notation when the
+     * quantum exponent is zero (e.g. {@code "123"}), plain notation when the quantum exponent
+     * is negative and the adjusted exponent is at least -6 (e.g. {@code "123.45"}), normalized
+     * scientific notation otherwise (e.g. {@code "1.234E+5"}). The exponent sign is always
+     * written, as in {@code "6.02E+23"}. Cohort information is preserved: {@code "1.00"} and
+     * {@code "1.0"} are distinct outputs from distinct encodings of the same numerical value.
      *
-     * <p>Special values render as {@code "Infinity"}, {@code "-Infinity"},
-     * {@code "NaN"} and {@code "sNaN"}, each with an optional sign and an
-     * optional payload suffix such as {@code "NaN123"}.
+     * Special values render as {@code "Infinity"}, {@code "-Infinity"}, {@code "NaN"} and
+     * {@code "sNaN"}, each with an optional sign and an optional payload suffix such as {@code
+     * "NaN123"}.
      *
-     * <p>The two interchange encodings differ only in how the coefficient is
-     * stored: BID128 as a binary integer, DPD128 as a leading digit plus
-     * eleven 10-bit declets. The sign and the 14-bit biased exponent are the
-     * same in both, and peer encodings of the same value render to identical
-     * text.
+     * The two interchange encodings differ only in how the coefficient is stored: BID128 as a
+     * binary integer, DPD128 as a leading digit plus eleven 10-bit declets. The sign and the
+     * 14-bit biased exponent are the same in both, and peer encodings of the same value render
+     * to identical text.
      *
-     * <p>This cannot fail. Every 128-bit pattern renders: a DPD128 coefficient is
-     * always in range, since a leading digit of at most 9 followed by eleven
-     * declets cannot reach 10^34; a NaN payload, carried in those same
-     * declets, is likewise always in range; and non-canonical declets decode
-     * to their value, per IEEE 754-2019 §3.5.2.
+     * This cannot fail. Every 128-bit pattern renders: a DPD128 coefficient is always in
+     * range, since a leading digit of at most 9 followed by eleven declets cannot reach 10^34;
+     * a NaN payload, carried in those same declets, is likewise always in range; and
+     * non-canonical declets decode to their value, per IEEE 754-2019 section 3.5.2.
      *
      * @param dpd128Hi high 64 bits of the DPD128 encoding
      * @param dpd128Lo low 64 bits of the DPD128 encoding
@@ -242,27 +235,36 @@ public final class Decimal128TextCodec {
     }
 
     /**
-     * Render a BID128 encoding into a caller-supplied buffer, allocating
-     * nothing.
+     * Render a BID128 encoding into a caller-supplied buffer, allocating nothing.
      *
-     * <p>Writes the ASCII text into {@code out} starting at index 0 and returns
-     * its length; the text is {@code out[0]} through {@code out[n - 1]}. No
-     * terminator is written. {@code out} must be at least {@code MAX_LEN}
-     * long; a shorter one throws {@code IllegalStateException} on entry rather
-     * than corrupting anything, so an undersized buffer is a caller bug that
-     * surfaces immediately -- on every call, not only on the values that
-     * would have overflowed it.
+     * The output is the GDAS {@code to-scientific-string} form: integer notation when the
+     * quantum exponent is zero (e.g. {@code "123"}), plain notation when the quantum exponent
+     * is negative and the adjusted exponent is at least -6 (e.g. {@code "123.45"}), normalized
+     * scientific notation otherwise (e.g. {@code "1.234E+5"}). The exponent sign is always
+     * written, as in {@code "6.02E+23"}. Cohort information is preserved: {@code "1.00"} and
+     * {@code "1.0"} are distinct outputs from distinct encodings of the same numerical value.
      *
-     * <p>The text is identical to what {@code bid128ToString} returns, and this
-     * form is the one to reach for when the destination is bytes — a stream, a
-     * socket, a CSV or JSON writer — because it leaves nothing for the
-     * collector.
+     * Special values render as {@code "Infinity"}, {@code "-Infinity"}, {@code "NaN"} and
+     * {@code "sNaN"}, each with an optional sign and an optional payload suffix such as {@code
+     * "NaN123"}.
      *
-     * <p>The two interchange encodings differ only in how the coefficient is
-     * stored: BID128 as a binary integer, DPD128 as a leading digit plus
-     * eleven 10-bit declets. The sign and the 14-bit biased exponent are the
-     * same in both, and peer encodings of the same value render to identical
-     * text.
+     * The two interchange encodings differ only in how the coefficient is stored: BID128 as a
+     * binary integer, DPD128 as a leading digit plus eleven 10-bit declets. The sign and the
+     * 14-bit biased exponent are the same in both, and peer encodings of the same value render
+     * to identical text.
+     *
+     * This cannot fail. Every 128-bit pattern renders: a non-canonical BID128 coefficient
+     * (&gt;= 10^34) renders as zero at the encoded exponent, and a NaN payload &gt;= 10^33
+     * renders as no payload, both per IEEE 754-2019 section 3.5.2.
+     *
+     * In Java: writes the ASCII text into {@code out} starting at index 0 and returns its
+     * length; the text is {@code out[0]} through {@code out[n - 1]}. No terminator is written.
+     * {@code out} must be at least {@code MAX_LEN} long; a shorter one throws {@code
+     * IllegalStateException} on entry rather than corrupting anything, so an undersized buffer
+     * is a caller bug that surfaces immediately -- on every call, not only on the values that
+     * would have overflowed it. The text is identical to what {@code bid128ToString} returns,
+     * and this form is the one to reach for when the destination is bytes -- a stream, a
+     * socket, a CSV or JSON writer -- because it leaves nothing for the collector.
      *
      * @param out the destination, at least {@code MAX_LEN} bytes
      * @param bid128Hi high 64 bits of the BID128 encoding
@@ -274,27 +276,37 @@ public final class Decimal128TextCodec {
     }
 
     /**
-     * Render a DPD128 encoding into a caller-supplied buffer, allocating
-     * nothing.
+     * Render a DPD128 encoding into a caller-supplied buffer, allocating nothing.
      *
-     * <p>Writes the ASCII text into {@code out} starting at index 0 and returns
-     * its length; the text is {@code out[0]} through {@code out[n - 1]}. No
-     * terminator is written. {@code out} must be at least {@code MAX_LEN}
-     * long; a shorter one throws {@code IllegalStateException} on entry rather
-     * than corrupting anything, so an undersized buffer is a caller bug that
-     * surfaces immediately -- on every call, not only on the values that
-     * would have overflowed it.
+     * The output is the GDAS {@code to-scientific-string} form: integer notation when the
+     * quantum exponent is zero (e.g. {@code "123"}), plain notation when the quantum exponent
+     * is negative and the adjusted exponent is at least -6 (e.g. {@code "123.45"}), normalized
+     * scientific notation otherwise (e.g. {@code "1.234E+5"}). The exponent sign is always
+     * written, as in {@code "6.02E+23"}. Cohort information is preserved: {@code "1.00"} and
+     * {@code "1.0"} are distinct outputs from distinct encodings of the same numerical value.
      *
-     * <p>The text is identical to what {@code dpd128ToString} returns, and this
-     * form is the one to reach for when the destination is bytes — a stream, a
-     * socket, a CSV or JSON writer — because it leaves nothing for the
-     * collector.
+     * Special values render as {@code "Infinity"}, {@code "-Infinity"}, {@code "NaN"} and
+     * {@code "sNaN"}, each with an optional sign and an optional payload suffix such as {@code
+     * "NaN123"}.
      *
-     * <p>The two interchange encodings differ only in how the coefficient is
-     * stored: BID128 as a binary integer, DPD128 as a leading digit plus
-     * eleven 10-bit declets. The sign and the 14-bit biased exponent are the
-     * same in both, and peer encodings of the same value render to identical
-     * text.
+     * The two interchange encodings differ only in how the coefficient is stored: BID128 as a
+     * binary integer, DPD128 as a leading digit plus eleven 10-bit declets. The sign and the
+     * 14-bit biased exponent are the same in both, and peer encodings of the same value render
+     * to identical text.
+     *
+     * This cannot fail. Every 128-bit pattern renders: a DPD128 coefficient is always in
+     * range, since a leading digit of at most 9 followed by eleven declets cannot reach 10^34;
+     * a NaN payload, carried in those same declets, is likewise always in range; and
+     * non-canonical declets decode to their value, per IEEE 754-2019 section 3.5.2.
+     *
+     * In Java: writes the ASCII text into {@code out} starting at index 0 and returns its
+     * length; the text is {@code out[0]} through {@code out[n - 1]}. No terminator is written.
+     * {@code out} must be at least {@code MAX_LEN} long; a shorter one throws {@code
+     * IllegalStateException} on entry rather than corrupting anything, so an undersized buffer
+     * is a caller bug that surfaces immediately -- on every call, not only on the values that
+     * would have overflowed it. The text is identical to what {@code dpd128ToString} returns,
+     * and this form is the one to reach for when the destination is bytes -- a stream, a
+     * socket, a CSV or JSON writer -- because it leaves nothing for the collector.
      *
      * @param out the destination, at least {@code MAX_LEN} bytes
      * @param dpd128Hi high 64 bits of the DPD128 encoding
@@ -308,64 +320,56 @@ public final class Decimal128TextCodec {
     /**
      * Parse a decimal character sequence into a BID128 encoding.
      *
-     * <p>Returns {@code null} on success, with the encoding written to
-     * {@code out}: {@code out[0]} takes the high 64 bits, {@code out[1]} the
-     * low 64. On failure returns a human-readable message and writes the
-     * canonical positive quiet NaN, so a caller who discards the message still
-     * observes a legal IEEE 754-2019 datum rather than stale or partial data.
-     * The message is the engine's ParseStatus name for the failure --
-     * EMPTY_STRING, INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT,
-     * NO_COEFFICIENT_DIGIT, NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION,
-     * FAILURE_PARSING_INFINITY or FAILURE_PARSING_NAN -- and the conformance
-     * suite asserts it against the shared corpus, so it is part of the contract.
+     * On failure the encoding written is the canonical positive quiet NaN, so a caller who
+     * discards the message still observes a legal IEEE 754-2019 datum rather than stale or
+     * partial data. The message is the engine's ParseStatus name for the failure --
+     * EMPTY_STRING, INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT, NO_COEFFICIENT_DIGIT,
+     * NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION, FAILURE_PARSING_INFINITY or
+     * FAILURE_PARSING_NAN -- and the conformance suite asserts it against the shared corpus,
+     * so it is part of the contract.
      *
-     * <p>Accepted input:
-     * <ul>
-     *  <li>Plain notation: {@code "0"}, {@code "-1.5"}, {@code "123.456"},
-     *    {@code "0.0001"}.
+     * Accepted input:
      *
-     *  <li>Scientific notation: {@code "1.5E10"}, {@code "-2.3e-7"},
-     *    {@code "6.02E+23"}. Both {@code E} and {@code e} are accepted as the
-     *    exponent separator.
+     * - Plain notation: {@code "0"}, {@code "-1.5"}, {@code "123.456"}, {@code "0.0001"}.
+     * - Scientific notation: {@code "1.5E10"}, {@code "-2.3e-7"}, {@code "6.02E+23"}. Both
+     *   {@code E} and {@code e} are accepted as the exponent separator.
+     * - Digit separators: {@code _} between two digits, in the coefficient or the exponent
+     *   ({@code "1_000"}, {@code "1.234_567"}, {@code "1e1_0"}). An underscore must be both
+     *   preceded and followed by a digit, so {@code "1_"}, {@code "_1"}, {@code "1__2"},
+     *   {@code "1_.5"} and {@code "1._5"} are all rejected.
+     * - The case-insensitive words {@code Infinity}, {@code Inf}, {@code NaN}, {@code qNaN}
+     *   and {@code sNaN}, each with an optional sign and an optional NaN payload of decimal
+     *   digits ({@code "NaN123"}, {@code "-sNaN42"}). A payload may also be parenthesised, as
+     *   {@code "NaN(123)"}.
      *
-     *  <li>Digit separators: {@code _} between two digits, in the coefficient or
-     *    the exponent ({@code "1_000"}, {@code "1.234_567"}, {@code "1e1_0"}).
-     *    An underscore must be both preceded and followed by a digit, so
-     *    {@code "1_"}, {@code "_1"}, {@code "1__2"}, {@code "1_.5"} and
-     *    {@code "1._5"} are all rejected.
+     * The parenthesised payload form is positional and balanced: {@code (} immediately after
+     * the word, at least one digit, {@code )} last. {@code "NaN()"}, {@code "NaN(1"}, {@code
+     * "NaN(1)2(3)"}, {@code "NaN[1]"} and {@code "NaN{1}"} are rejected. Rendering never emits
+     * parentheses, and the full decimal128 ports accept the same spelling.
      *
-     *  <li>The case-insensitive words {@code Infinity}, {@code Inf},
-     *    {@code NaN}, {@code qNaN} and {@code sNaN}, each with an optional
-     *    sign and an optional NaN payload of decimal digits ({@code "NaN123"},
-     *    {@code "-sNaN42"}). A payload may also be parenthesised, as
-     *    {@code "NaN(123)"}.
-     * </ul>
+     * More than 34 significant digits round to 34, ties-to-even. Magnitudes above the
+     * representable range become {@code Infinity}; magnitudes below it become a subnormal or
+     * zero. None of those are failures.
      *
-     * <p>The parenthesised payload form is positional and balanced: {@code (}
-     * immediately after the word, at least one digit, {@code )} last.
-     * {@code "NaN()"}, {@code "NaN(1"}, {@code "NaN(1)2(3)"}, {@code "NaN[1]"}
-     * and {@code "NaN{1}"} are rejected. Rendering never emits parentheses,
-     * and the full decimal128 ports accept the same spelling.
+     * Failures are structural: an empty sequence, unrecognized characters, missing digits
+     * around the radix point, a malformed exponent field.
      *
-     * <p>More than 34 significant digits round to 34, ties-to-even. Magnitudes
-     * above the representable range become {@code Infinity}; magnitudes below
-     * it become a subnormal or zero. None of those are failures.
+     * The two interchange encodings differ only in how the coefficient is stored: BID128 as a
+     * binary integer, DPD128 as a leading digit plus eleven 10-bit declets. The same text
+     * parses to peer encodings of the same value in either format, and the canonical positive
+     * quiet NaN is the same bit pattern in both.
      *
-     * <p>Failures are structural: an empty sequence, unrecognized characters,
-     * missing digits around the radix point, a malformed exponent field.
-     *
-     * <p>The two interchange encodings differ only in how the coefficient is
-     * stored: BID128 as a binary integer, DPD128 as a leading digit plus
-     * eleven 10-bit declets. The same text parses to peer encodings of the
-     * same value in either format, and the canonical positive quiet NaN is the
-     * same bit pattern in both.
+     * In Java: returns {@code null} on success, with the encoding written to {@code out}:
+     * {@code out[0]} takes the high 64 bits, {@code out[1]} the low 64. On failure returns the
+     * message. {@code out} must have at least two elements; a shorter one throws {@code
+     * IllegalStateException}.
      *
      * @param out receives the BID128 encoding, or the canonical positive
-     *   quiet NaN on failure; length ≥ 2
+     *   quiet NaN on failure; length >= 2
      * @param str the character sequence to parse
      * @return {@code null} on success, or a human-readable message on
      *   failure
-     * @throws IllegalArgumentException if {@code out.length < 2}
+     * @throws IllegalStateException if {@code out.length < 2}
      */
     public static String bid128Parse(long[] out, String str) {
         return parseInto(out, true, str);
@@ -374,64 +378,56 @@ public final class Decimal128TextCodec {
     /**
      * Parse a decimal character sequence into a DPD128 encoding.
      *
-     * <p>Returns {@code null} on success, with the encoding written to
-     * {@code out}: {@code out[0]} takes the high 64 bits, {@code out[1]} the
-     * low 64. On failure returns a human-readable message and writes the
-     * canonical positive quiet NaN, so a caller who discards the message still
-     * observes a legal IEEE 754-2019 datum rather than stale or partial data.
-     * The message is the engine's ParseStatus name for the failure --
-     * EMPTY_STRING, INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT,
-     * NO_COEFFICIENT_DIGIT, NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION,
-     * FAILURE_PARSING_INFINITY or FAILURE_PARSING_NAN -- and the conformance
-     * suite asserts it against the shared corpus, so it is part of the contract.
+     * On failure the encoding written is the canonical positive quiet NaN, so a caller who
+     * discards the message still observes a legal IEEE 754-2019 datum rather than stale or
+     * partial data. The message is the engine's ParseStatus name for the failure --
+     * EMPTY_STRING, INVALID_FORMAT, UNEXPECTED_CHAR, DOUBLE_DOT, NO_COEFFICIENT_DIGIT,
+     * NO_EXPONENT_DIGIT, INVALID_UNDERSCORE_LOCATION, FAILURE_PARSING_INFINITY or
+     * FAILURE_PARSING_NAN -- and the conformance suite asserts it against the shared corpus,
+     * so it is part of the contract.
      *
-     * <p>Accepted input:
-     * <ul>
-     *  <li>Plain notation: {@code "0"}, {@code "-1.5"}, {@code "123.456"},
-     *    {@code "0.0001"}.
+     * Accepted input:
      *
-     *  <li>Scientific notation: {@code "1.5E10"}, {@code "-2.3e-7"},
-     *    {@code "6.02E+23"}. Both {@code E} and {@code e} are accepted as the
-     *    exponent separator.
+     * - Plain notation: {@code "0"}, {@code "-1.5"}, {@code "123.456"}, {@code "0.0001"}.
+     * - Scientific notation: {@code "1.5E10"}, {@code "-2.3e-7"}, {@code "6.02E+23"}. Both
+     *   {@code E} and {@code e} are accepted as the exponent separator.
+     * - Digit separators: {@code _} between two digits, in the coefficient or the exponent
+     *   ({@code "1_000"}, {@code "1.234_567"}, {@code "1e1_0"}). An underscore must be both
+     *   preceded and followed by a digit, so {@code "1_"}, {@code "_1"}, {@code "1__2"},
+     *   {@code "1_.5"} and {@code "1._5"} are all rejected.
+     * - The case-insensitive words {@code Infinity}, {@code Inf}, {@code NaN}, {@code qNaN}
+     *   and {@code sNaN}, each with an optional sign and an optional NaN payload of decimal
+     *   digits ({@code "NaN123"}, {@code "-sNaN42"}). A payload may also be parenthesised, as
+     *   {@code "NaN(123)"}.
      *
-     *  <li>Digit separators: {@code _} between two digits, in the coefficient or
-     *    the exponent ({@code "1_000"}, {@code "1.234_567"}, {@code "1e1_0"}).
-     *    An underscore must be both preceded and followed by a digit, so
-     *    {@code "1_"}, {@code "_1"}, {@code "1__2"}, {@code "1_.5"} and
-     *    {@code "1._5"} are all rejected.
+     * The parenthesised payload form is positional and balanced: {@code (} immediately after
+     * the word, at least one digit, {@code )} last. {@code "NaN()"}, {@code "NaN(1"}, {@code
+     * "NaN(1)2(3)"}, {@code "NaN[1]"} and {@code "NaN{1}"} are rejected. Rendering never emits
+     * parentheses, and the full decimal128 ports accept the same spelling.
      *
-     *  <li>The case-insensitive words {@code Infinity}, {@code Inf},
-     *    {@code NaN}, {@code qNaN} and {@code sNaN}, each with an optional
-     *    sign and an optional NaN payload of decimal digits ({@code "NaN123"},
-     *    {@code "-sNaN42"}). A payload may also be parenthesised, as
-     *    {@code "NaN(123)"}.
-     * </ul>
+     * More than 34 significant digits round to 34, ties-to-even. Magnitudes above the
+     * representable range become {@code Infinity}; magnitudes below it become a subnormal or
+     * zero. None of those are failures.
      *
-     * <p>The parenthesised payload form is positional and balanced: {@code (}
-     * immediately after the word, at least one digit, {@code )} last.
-     * {@code "NaN()"}, {@code "NaN(1"}, {@code "NaN(1)2(3)"}, {@code "NaN[1]"}
-     * and {@code "NaN{1}"} are rejected. Rendering never emits parentheses,
-     * and the full decimal128 ports accept the same spelling.
+     * Failures are structural: an empty sequence, unrecognized characters, missing digits
+     * around the radix point, a malformed exponent field.
      *
-     * <p>More than 34 significant digits round to 34, ties-to-even. Magnitudes
-     * above the representable range become {@code Infinity}; magnitudes below
-     * it become a subnormal or zero. None of those are failures.
+     * The two interchange encodings differ only in how the coefficient is stored: BID128 as a
+     * binary integer, DPD128 as a leading digit plus eleven 10-bit declets. The same text
+     * parses to peer encodings of the same value in either format, and the canonical positive
+     * quiet NaN is the same bit pattern in both.
      *
-     * <p>Failures are structural: an empty sequence, unrecognized characters,
-     * missing digits around the radix point, a malformed exponent field.
-     *
-     * <p>The two interchange encodings differ only in how the coefficient is
-     * stored: BID128 as a binary integer, DPD128 as a leading digit plus
-     * eleven 10-bit declets. The same text parses to peer encodings of the
-     * same value in either format, and the canonical positive quiet NaN is the
-     * same bit pattern in both.
+     * In Java: returns {@code null} on success, with the encoding written to {@code out}:
+     * {@code out[0]} takes the high 64 bits, {@code out[1]} the low 64. On failure returns the
+     * message. {@code out} must have at least two elements; a shorter one throws {@code
+     * IllegalStateException}.
      *
      * @param out receives the DPD128 encoding, or the canonical positive
-     *   quiet NaN on failure; length ≥ 2
+     *   quiet NaN on failure; length >= 2
      * @param str the character sequence to parse
      * @return {@code null} on success, or a human-readable message on
      *   failure
-     * @throws IllegalArgumentException if {@code out.length < 2}
+     * @throws IllegalStateException if {@code out.length < 2}
      */
     public static String dpd128Parse(long[] out, String str) {
         return parseInto(out, false, str);
